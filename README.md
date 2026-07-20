@@ -2,8 +2,11 @@
 
 > Unofficial, type-safe, secure client for the [iCarry](https://icarry.com) shipping & logistics API — zero dependencies.
 
+[![npm version](https://img.shields.io/npm/v/icarry-sdk.svg)](https://www.npmjs.com/package/icarry-sdk)
+[![npm downloads](https://img.shields.io/npm/dm/icarry-sdk.svg)](https://www.npmjs.com/package/icarry-sdk)
+[![CI](https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/actions/workflows/ci.yml)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
 ---
 
