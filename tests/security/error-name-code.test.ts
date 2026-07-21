@@ -16,7 +16,7 @@ describe('sanitizeErrorName', () => {
     expect(sanitizeErrorName('Bearer SUPER_SECRET')).toBe('Error'); // space
     expect(sanitizeErrorName('token=abc')).toBe('Error'); // '='
     expect(sanitizeErrorName('1111222233334444')).toBe('Error'); // starts with digit
-    expect(sanitizeErrorName('Card4111111111111111')).toBe('Error'); // redactString alters
+    expect(sanitizeErrorName('Card1111222233334444')).toBe('Error'); // redactString alters (16-digit run masked)
     expect(sanitizeErrorName('bad\nname')).toBe('Error'); // control char
     expect(sanitizeErrorName(123 as unknown)).toBe('Error');
     expect(sanitizeErrorName({} as unknown)).toBe('Error');
