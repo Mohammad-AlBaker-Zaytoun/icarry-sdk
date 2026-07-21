@@ -13,7 +13,7 @@ import { HttpClient } from '../transport/http-client';
 import { ENDPOINTS } from '../constants';
 import type {
   DimensionsWithUnit,
-  ExtensibleResponse,
+  AmbiguousApiResult,
   GeoPoint,
   NumericInput,
   PackageType,
@@ -91,9 +91,9 @@ export interface OnDemandCreateShipmentInput {
 }
 
 /** Unverified rate result — returned as received. */
-export type OnDemandRateResult = ExtensibleResponse;
+export type OnDemandRateResult = AmbiguousApiResult;
 /** Unverified shipment-creation result — returned as received. Expected to carry a shipment id. */
-export type OnDemandShipmentResult = ExtensibleResponse;
+export type OnDemandShipmentResult = AmbiguousApiResult;
 
 function toWireOnDemandAddress(a: OnDemandAddress): Record<string, unknown> {
   return omitUndefined({

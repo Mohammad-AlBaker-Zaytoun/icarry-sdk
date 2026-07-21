@@ -1,6 +1,6 @@
 {
   "name": "icarry-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Unofficial iCarry shipping & logistics API client for Node.js — type-safe, secure, zero dependencies",
   "author": "Zaytoun Solutions <info@zaytounsolutions.com>",
   "license": "MIT",
@@ -67,11 +67,14 @@
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "typecheck": "tsc --noEmit",
+    "test:types": "tsc -p tests/types/tsconfig.json",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "check:secrets": "node scripts/check-forbidden.mjs",
-    "smoke": "node scripts/smoke.mjs",
-    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run check:secrets && npm run test:coverage && npm run build",
+    "smoke": "npm run smoke:dist",
+    "smoke:dist": "node scripts/smoke.mjs",
+    "smoke:package": "node scripts/smoke-package.mjs",
+    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test:types && npm run check:secrets && npm run test:coverage && npm run build",
     "prepublishOnly": "npm run validate"
   },
   "devDependencies": {

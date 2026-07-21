@@ -98,6 +98,56 @@ export function validateRelativePath(path: unknown): PathValidation {
   return { ok: true };
 }
 
+/** Decodes a path segment up to `maxRounds` times, returning every intermediate form. */
+function decodedForms(segment: string, maxRounds = 2): string[] {
+  const forms = [segment];
+  let current = segment;
+  for (let i = 0; i < maxRounds; i += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      break;
+    }
+    if (decoded === current) {
+      break;
+    }
+    forms.push(decoded);
+    current = decoded;
+  }
+  return forms;
+}
+
+/**
+ * Stricter validation for the low-level escape hatch. In addition to
+ * {@link validateRelativePath}'s checks (non-empty, no absolute URL, no query/fragment, no
+ * control chars), rejects backslashes and `.`/`..` path segments in literal, percent-encoded,
+ * and double-encoded forms — preventing traversal that URL normalization could otherwise
+ * resolve outside the `/api-frontend` prefix.
+ */
+export function validateRelativeApiPath(path: unknown): PathValidation {
+  const base = validateRelativePath(path);
+  if (!base.ok) {
+    return base;
+  }
+  const value = path as string;
+  if (value.includes('\\') || /%5c/i.test(value)) {
+    return { ok: false, reason: 'path must not contain backslashes.' };
+  }
+  for (const rawSegment of value.split('/')) {
+    for (const form of decodedForms(rawSegment)) {
+      const normalized = form.toLowerCase();
+      if (normalized === '.' || normalized === '..') {
+        return { ok: false, reason: 'path must not contain "." or ".." segments.' };
+      }
+      if (normalized.includes('\\')) {
+        return { ok: false, reason: 'path must not contain backslashes.' };
+      }
+    }
+  }
+  return { ok: true };
+}
+
 /**
  * Strips any query string and fragment from a path so it is safe to place in error details
  * and observability metadata, even if an internal caller violated the path contract. Also

@@ -12,7 +12,7 @@ import { normalizeConfig, type ICarryClientOptions } from './config';
 import { ICarryValidationError } from './errors';
 import { HttpClient, type RequestSpec } from './transport/http-client';
 import { TokenManager } from './transport/token-manager';
-import { validateRelativePath } from './transport/url';
+import { validateRelativeApiPath } from './transport/url';
 import { AuthResource } from './resources/auth';
 import { WarehousesResource } from './resources/warehouses';
 import { CountriesResource } from './resources/countries';
@@ -29,7 +29,9 @@ export interface LowLevelRequest {
   method: 'GET' | 'POST';
   /**
    * Path relative to the API prefix (leading slash optional). Must not contain a query
-   * string, fragment, absolute URL, or control characters — use `query` for parameters.
+   * string, fragment, absolute URL, control characters, backslashes, or `.`/`..` path
+   * segments (literal or percent-encoded) — use `query` for parameters. The resolved URL is
+   * additionally verified to stay within the configured API prefix.
    */
   path: string;
   query?: QueryParams;
@@ -152,7 +154,7 @@ export class ICarryClient {
    * @throws {@link ICarryValidationError} if `path` is not a safe relative path.
    */
   async request<T>(req: LowLevelRequest): Promise<T> {
-    const validation = validateRelativePath(req.path);
+    const validation = validateRelativeApiPath(req.path);
     if (!validation.ok) {
       throw new ICarryValidationError(validation.reason ?? 'Invalid path.', 'path');
     }

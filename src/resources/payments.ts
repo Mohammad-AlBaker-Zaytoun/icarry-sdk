@@ -19,7 +19,7 @@ import { HttpClient } from '../transport/http-client';
 import { ENDPOINTS } from '../constants';
 import { encodePathParam } from '../transport/url';
 import { ICarryValidationError } from '../errors';
-import type { ExtensibleResponse, RequestOptions } from '../types';
+import type { AmbiguousApiResult, RequestOptions } from '../types';
 import {
   requireNonEmptyString,
   requirePositiveId,
@@ -69,7 +69,7 @@ export interface MontyPayReturnInput {
 }
 
 /** Unverified result — returned as received (often a bare string). */
-export type PaymentResult = ExtensibleResponse | string;
+export type PaymentResult = AmbiguousApiResult;
 
 function validateCard(card: PaymentCardInput): void {
   if (!card || typeof card !== 'object') {

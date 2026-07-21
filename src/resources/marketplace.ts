@@ -8,7 +8,7 @@
 
 import { HttpClient } from '../transport/http-client';
 import { ENDPOINTS } from '../constants';
-import type { ExtensibleResponse, RequestOptions } from '../types';
+import type { AmbiguousApiResult, RequestOptions } from '../types';
 import { toRequestFields, requireNonEmptyString } from './_shared';
 import {
   type MerchantRateInput,
@@ -31,9 +31,9 @@ export interface MarketplaceCreateOrderInput extends MerchantCreateOrderInput {
 }
 
 /** Unverified rate-estimation result — returned as received. */
-export type MarketplaceRateResult = ExtensibleResponse;
+export type MarketplaceRateResult = AmbiguousApiResult;
 /** Unverified order-creation result — returned as received. */
-export type MarketplaceOrderResult = ExtensibleResponse;
+export type MarketplaceOrderResult = AmbiguousApiResult;
 
 /** Serializes {@link MarketplaceRateInput}: merchant rate body + `pickupLocation`. */
 export function toWireMarketplaceRate(input: MarketplaceRateInput): Record<string, unknown> {

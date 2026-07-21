@@ -13,7 +13,7 @@ import { HttpClient } from '../transport/http-client';
 import { ENDPOINTS } from '../constants';
 import type {
   Dimensions,
-  ExtensibleResponse,
+  AmbiguousApiResult,
   GeoPoint,
   NumericInput,
   PackageType,
@@ -109,12 +109,12 @@ export interface MerchantCreateOrderInput {
  * Rate-estimation result. The response schema is **unverified** (the Postman example is an
  * echo of the request); fields are returned as received.
  */
-export type MerchantRateResult = ExtensibleResponse;
+export type MerchantRateResult = AmbiguousApiResult;
 
 /**
  * Order-creation result. **Unverified** schema — returned as received. Read defensively.
  */
-export type MerchantOrderResult = ExtensibleResponse;
+export type MerchantOrderResult = AmbiguousApiResult;
 
 /** Serializes recipient address to the merchant order wire shape (free-text `Country`). */
 export function toWireMerchantAddress(a: MerchantAddress): Record<string, unknown> {

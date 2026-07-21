@@ -6,6 +6,69 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.2] - Type accuracy & boundary hardening
+
+A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing, retry
+policy, authentication modes, ESM/CJS output, and zero runtime dependencies are preserved. One
+correctness-driven type broadening (see Types).
+
+### Fixed
+
+- The `Accept` header no longer over-advertises PDF for `expect: 'auto'` (tracking, rate, order,
+  payment, cancellation). Each parse mode now sends an appropriate `Accept` (`json` →
+  `application/json`; `text` → text-preferred; `binary` → pdf/octet-stream; `auto` →
+  json-preferred). The packaging slip explicitly prefers PDF/binary while still content-type
+  auto-parsing.
+
+### Security
+
+- **Authentication-error sanitization bypass closed.** Every failure from credential auth, token
+  providers, token-acquisition callbacks, and auth-response parsing is wrapped in a freshly
+  sanitized `ICarryAuthenticationError` (message via `redactString`, cause via
+  `sanitizeErrorCause`, details sanitized). An existing `ICarryAuthenticationError` is no longer
+  rethrown unchanged.
+- **API-prefix escape via dot segments prevented.** Low-level path validation now rejects `.` /
+  `..` segments (literal, percent-encoded, and double-encoded) and backslashes. Additionally the
+  fully-resolved URL is verified to keep the base origin and stay within `/api-frontend`, a
+  catch-all against traversal that URL normalization could otherwise resolve outside the prefix.
+  No bearer token is sent when validation fails.
+- **Error names and codes sanitized.** New `sanitizeErrorName`/`sanitizeErrorCode` are applied to
+  sanitized causes, `SafeHookError`, surfaced API error codes, and request/correlation ids, so a
+  hostile `error.name` / `error.code` cannot leak secrets.
+- **Nested redirect-URL leakage fixed.** `redirectUrl`, `successUrl`, `cancelUrl` (and the
+  aliases `returnUrl`, `callbackUrl`, `failureUrl`, `errorUrl`) are treated as fully sensitive in
+  every URL representation — their entire, possibly secret-bearing values are masked in request
+  hooks, error messages/details, sanitized causes, and retry diagnostics.
+
+### Types
+
+- Endpoints parsed with `expect: 'auto'` now return the accurate `AmbiguousApiResult` union
+  (`object | unknown[] | string | number | boolean | null | undefined`) rather than always an
+  object, matching runtime behavior. This broadens `MerchantRateResult`, `MerchantOrderResult`,
+  `MarketplaceRateResult`, `MarketplaceOrderResult`, `OnDemandRateResult`, `OnDemandShipmentResult`,
+  `TrackingResult`, `CancelResult`, and `PaymentResult`, and exports `AmbiguousApiResult`. Callers
+  must narrow (e.g. `typeof result === 'object' && result !== null`) before treating an ambiguous
+  result as an object. High-confidence endpoints (auth, countries, states, warehouses) are
+  unchanged. This reflects incomplete iCarry documentation and is shipped as a **patch-level
+  correctness fix**; code that previously assumed an object may now require narrowing to compile.
+
+### Tests
+
+- Added compile-time type tests (`npm run test:types`) proving ambiguous results require
+  narrowing, plus regression suites for auth-error sanitization, path traversal, per-mode `Accept`
+  headers, error name/code sanitization, and nested redirect-URL redaction.
+- Added a packed-package consumer smoke test (`npm run smoke:package`) that packs the real
+  tarball, installs it into a temp project, and validates ESM import, CommonJS require, the
+  `package.json` subpath export, TypeScript declaration resolution, version consistency, a mocked
+  call, and the absence of `src/`/`tests/`/`coverage/` from the tarball.
+
+### Release
+
+- No `v0.1.0` or `v0.1.1` git tags existed (locally or on the remote). Their exact published
+  commits (npm `gitHead`) are `1aa12aecf84500a719be4acb12fb4338b0620416` (0.1.0) and
+  `73656669afb4501790d93ef6fc0351766aed9fbe` (0.1.1); recommended manual tag commands are in the
+  release notes for this task. CI now builds, packs, and runs the packed-package smoke test.
+
 ## [0.1.1] - Security hardening & reliability
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing, and retry
@@ -88,6 +151,7 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/releases/tag/v0.1.0

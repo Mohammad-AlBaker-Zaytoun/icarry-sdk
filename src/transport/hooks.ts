@@ -16,20 +16,18 @@ import type {
   SafeHookError,
   HookPhase,
 } from '../types';
-import { redactString } from './redaction';
+import { redactString, sanitizeErrorName, sanitizeErrorCode } from './redaction';
 
 /** Converts an arbitrary thrown value into a sanitized {@link SafeHookError}. */
 function toSafeHookError(error: unknown): SafeHookError {
   if (error instanceof Error) {
     const out: SafeHookError = {
-      name: typeof error.name === 'string' && error.name.length > 0 ? error.name : 'Error',
+      name: sanitizeErrorName(error.name),
       message: typeof error.message === 'string' ? redactString(error.message) : '',
     };
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === 'string') {
+    const code = sanitizeErrorCode((error as { code?: unknown }).code);
+    if (code !== undefined) {
       out.code = code;
-    } else if (typeof code === 'number') {
-      out.code = String(code);
     }
     return out;
   }

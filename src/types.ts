@@ -69,6 +69,23 @@ export type ExtensibleResponse = { readonly [key: string]: unknown };
 /** Alias of {@link ExtensibleResponse} for entity-shaped payloads. */
 export type ICarryEntity = ExtensibleResponse;
 
+/**
+ * The set of values an endpoint parsed with `expect: 'auto'` can actually return.
+ *
+ * iCarry does not verify the response schemas for these endpoints, so the SDK's type reflects
+ * runtime reality rather than an assumed object shape:
+ *
+ * - `JSON.parse` of a JSON body can yield an object, array, string, number, boolean, or `null`.
+ * - A `text/plain` (or unparseable) body yields a `string`.
+ * - An empty response yields `undefined`.
+ *
+ * Callers **must** narrow (e.g. check `typeof result === 'object' && result !== null`) before
+ * treating an ambiguous result as an object. This intentionally reflects incomplete iCarry
+ * documentation; it is not a defect.
+ */
+export type AmbiguousApiResult =
+  ExtensibleResponse | unknown[] | string | number | boolean | null | undefined;
+
 /** Tunable transient-retry policy. All fields optional; unset fields use SDK defaults. */
 export interface RetryOptions {
   /** Maximum number of retries after the initial attempt. */

@@ -11,13 +11,13 @@
 import { HttpClient } from '../transport/http-client';
 import { ENDPOINTS } from '../constants';
 import { encodePathParam } from '../transport/url';
-import type { ExtensibleResponse, RequestOptions } from '../types';
+import type { AmbiguousApiResult, RequestOptions } from '../types';
 import { requireNonEmptyString, requirePositiveId, toRequestFields } from './_shared';
 
 /** Unverified tracking result — returned as received. */
-export type TrackingResult = ExtensibleResponse;
+export type TrackingResult = AmbiguousApiResult;
 /** Unverified cancellation result — returned as received. */
-export type CancelResult = ExtensibleResponse;
+export type CancelResult = AmbiguousApiResult;
 
 /**
  * Packaging-slip result. iCarry's response content type is ambiguous, so the shape is a
@@ -91,6 +91,8 @@ export class ShipmentsResource {
       method: 'GET',
       path: `${ENDPOINTS.pdfPackagingSlip}/${encodePathParam(shipmentId)}`,
       expect: 'auto',
+      // Advertise a binary (PDF) preference while still content-type-auto-parsing the result.
+      accept: 'application/pdf, application/octet-stream;q=0.9, application/json;q=0.8, */*;q=0.1',
       retryable: true,
       ...toRequestFields(options),
     });

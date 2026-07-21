@@ -17,8 +17,10 @@ import {
   ICarryTimeoutError,
   ICarryAbortError,
   ICarryResponseParseError,
+  ICarryValidationError,
   ICarryError,
   type ICarryApiErrorDetails,
+  type ICarryErrorOptions,
 } from '../errors';
 import type {
   ICarryHooks,
@@ -32,7 +34,13 @@ import { TokenManager } from './token-manager';
 import { joinPath, sanitizePathForMetadata } from './url';
 import { buildQuery, type QueryParams } from './query';
 import { parseResponse, type Expect, type ParsedResponse } from './response-parser';
-import { redact, redactUrl, redactString, sanitizeErrorCause } from './redaction';
+import {
+  redact,
+  redactUrl,
+  redactString,
+  sanitizeErrorCause,
+  sanitizeErrorCode,
+} from './redaction';
 import { deepFreeze } from './freeze';
 import { isRetryableStatus, isTransientError, parseRetryAfter, computeDelay } from './retry';
 import { runRequestHook, runResponseHook, runRetryHook } from './hooks';
@@ -53,6 +61,12 @@ export interface RequestSpec {
   retryable?: boolean;
   /** Response parse strategy. Defaults to `'json'`. */
   expect?: Expect;
+  /**
+   * Overrides the default `Accept` header derived from `expect` (still de-duplicated and
+   * overridable by caller `headers`). Used by endpoints like the packaging slip that parse
+   * with `'auto'` but should advertise a binary preference.
+   */
+  accept?: string;
   /** Caller abort signal, combined with the SDK's timeout. */
   signal?: AbortSignal;
   /** Per-call timeout override in milliseconds. */
@@ -113,6 +127,9 @@ export class HttpClient {
     const expect: Expect = spec.expect ?? 'json';
     const timeoutMs = spec.timeoutMs ?? this.#deps.timeoutMs;
     const fullUrl = joinPath(this.#deps.baseUrl, API_PREFIX, spec.path) + buildQuery(spec.query);
+    // Catch-all against dot-segment / encoded-dot traversal: the normalized URL must stay on
+    // the base origin and within the API prefix. Runs before any token is acquired or sent.
+    assertWithinApiPrefix(fullUrl, this.#deps.baseUrl);
     // Metadata path is always stripped of any query/fragment, even if an internal spec.path
     // erroneously contained one — belt-and-suspenders against query-string leakage.
     const path = sanitizePathForMetadata(joinPath('', API_PREFIX, spec.path));
@@ -220,14 +237,9 @@ export class HttpClient {
     try {
       return await this.#deps.tokenManager.getToken();
     } catch (error) {
-      if (error instanceof ICarryAuthenticationError) {
-        throw error;
-      }
-      const message =
-        error instanceof ICarryError
-          ? redactString(error.message)
-          : 'Failed to acquire an iCarry authentication token';
-      throw new ICarryAuthenticationError(message, { cause: sanitizeErrorCause(error) });
+      // Every failure from credential auth / token providers / auth parsing is untrusted —
+      // sanitize unconditionally rather than rethrowing an existing SDK error unchanged.
+      throw sanitizeAuthenticationError(error);
     }
   }
 
@@ -245,10 +257,9 @@ export class HttpClient {
     hasBody: boolean,
     expect: Expect
   ): Record<string, string> {
-    const accept =
-      expect === 'binary' || expect === 'auto'
-        ? 'application/pdf, application/json;q=0.9, */*;q=0.1'
-        : 'application/json';
+    // Per-`expect` Accept default; an explicit `spec.accept` (e.g. the packaging slip's binary
+    // preference) overrides it, and a caller `headers` Accept overrides that.
+    const accept = spec.accept ?? acceptForExpect(expect);
 
     // lowercase name -> [display name, value]
     const map = new Map<string, [string, string]>();
@@ -361,8 +372,9 @@ export class HttpClient {
     const { message, code, body } = interpretErrorBody(parsed);
     const safeMessage = redactString(message);
     const details: ICarryApiErrorDetails = { status: parsed.status, method, path };
-    if (code !== undefined) {
-      details.code = redactString(code);
+    const safeCode = sanitizeErrorCode(code);
+    if (safeCode !== undefined) {
+      details.code = safeCode;
     }
     if (requestId !== undefined) {
       details.requestId = requestId;
@@ -397,6 +409,106 @@ export class HttpClient {
   }
 }
 
+/** The default `Accept` header for a given parse strategy (Issue: PDF was over-advertised). */
+function acceptForExpect(expect: Expect): string {
+  switch (expect) {
+    case 'text':
+      return 'text/plain, application/json;q=0.9, */*;q=0.1';
+    case 'binary':
+      return 'application/pdf, application/octet-stream;q=0.9, */*;q=0.1';
+    case 'auto':
+      return 'application/json, text/plain;q=0.9, */*;q=0.1';
+    case 'empty':
+    case 'json':
+    default:
+      return 'application/json';
+  }
+}
+
+/** Sanitizes an {@link ICarryApiErrorDetails} bag for safe re-surfacing on an auth error. */
+function sanitizeAuthDetails(details: unknown): ICarryApiErrorDetails | undefined {
+  if (!details || typeof details !== 'object') {
+    return undefined;
+  }
+  const src = details as ICarryApiErrorDetails;
+  const out: ICarryApiErrorDetails = {};
+  if (typeof src.status === 'number') {
+    out.status = src.status;
+  }
+  if (typeof src.method === 'string') {
+    out.method = redactString(src.method);
+  }
+  if (typeof src.path === 'string') {
+    out.path = sanitizePathForMetadata(redactString(src.path));
+  }
+  const code = sanitizeErrorCode(src.code);
+  if (code !== undefined) {
+    out.code = code;
+  }
+  if (typeof src.requestId === 'string') {
+    const rid = redactString(src.requestId).slice(0, 200);
+    if (rid.length > 0) {
+      out.requestId = rid;
+    }
+  }
+  if (src.details !== undefined) {
+    out.details = redact(src.details, { sanitizeStrings: true });
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Wraps ANY error raised while acquiring/refreshing a token (credentials, token provider,
+ * auth response parsing) into a sanitized {@link ICarryAuthenticationError}. Even an existing
+ * `ICarryAuthenticationError` is re-sanitized rather than rethrown unchanged, because a custom
+ * token provider is untrusted input and could embed secrets in its message/cause/details.
+ */
+export function sanitizeAuthenticationError(error: unknown): ICarryAuthenticationError {
+  let rawMessage: string | undefined;
+  if (error instanceof ICarryError || error instanceof Error) {
+    rawMessage = typeof error.message === 'string' ? error.message : undefined;
+  } else if (typeof error === 'string') {
+    rawMessage = error;
+  }
+  const message = redactString(
+    rawMessage && rawMessage.length > 0
+      ? rawMessage
+      : 'Authentication failed while acquiring a token.'
+  );
+  const options: ICarryErrorOptions = { cause: sanitizeErrorCause(error) };
+  const details = sanitizeAuthDetails(error instanceof ICarryError ? error.details : undefined);
+  if (details !== undefined) {
+    options.details = details;
+  }
+  return new ICarryAuthenticationError(message, options);
+}
+
+/**
+ * Verifies the fully-constructed request URL stays on the configured API base origin and
+ * within the `/api-frontend` prefix — a catch-all against dot-segment / encoded-dot traversal
+ * that WHATWG URL normalization could otherwise resolve outside the prefix. Throws
+ * {@link ICarryValidationError} if it escaped.
+ */
+function assertWithinApiPrefix(fullUrl: string, baseUrl: string): void {
+  let apiRoot: URL;
+  let finalUrl: URL;
+  try {
+    apiRoot = new URL(joinPath(baseUrl, API_PREFIX, '/'));
+    finalUrl = new URL(fullUrl);
+  } catch {
+    throw new ICarryValidationError('Request URL could not be constructed safely.', 'path');
+  }
+  const prefixPath = apiRoot.pathname.replace(/\/+$/, ''); // e.g. /api-frontend
+  const withinPrefix =
+    finalUrl.pathname === prefixPath || finalUrl.pathname.startsWith(`${prefixPath}/`);
+  if (finalUrl.origin !== apiRoot.origin || !withinPrefix) {
+    throw new ICarryValidationError(
+      'Resolved request path escaped the API prefix; use a relative path without "." or ".." segments.',
+      'path'
+    );
+  }
+}
+
 function unwrap<T>(parsed: ParsedResponse): T {
   switch (parsed.kind) {
     case 'json':
@@ -414,7 +526,9 @@ function extractRequestId(headers: Headers): string | undefined {
   for (const name of REQUEST_ID_HEADERS) {
     const value = headers.get(name);
     if (value) {
-      return value;
+      // Server-controlled; sanitize before surfacing it in error details / hook metadata.
+      const safe = redactString(value).slice(0, 200);
+      return safe.length > 0 ? safe : undefined;
     }
   }
   return undefined;

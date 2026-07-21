@@ -38,6 +38,7 @@ export type {
   ParcelDimensions,
   ExtensibleResponse,
   ICarryEntity,
+  AmbiguousApiResult,
   RetryOptions,
   RetryPolicy,
   RequestOptions,

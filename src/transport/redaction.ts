@@ -33,7 +33,7 @@ export const REDACTED = '[REDACTED]';
 
 /** Alternation of key names whose value must be fully masked. */
 const SECRET_KEY_ALT =
-  'password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|auth|secret|api[_-]?key|apikey|card[_-]?cvv2?|card[_-]?cvc2?|cvv2?|cvc2?|security[_-]?code|card[_-]?name|card[_-]?type|card[_-]?expiration[_-]?month|card[_-]?expiration[_-]?year|expiry|expiry[_-]?month|expiry[_-]?year|expiration[_-]?month|expiration[_-]?year';
+  'password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|id[_-]?token|authorization|auth|secret|api[_-]?key|apikey|card[_-]?cvv2?|card[_-]?cvc2?|cvv2?|cvc2?|security[_-]?code|card[_-]?name|card[_-]?type|card[_-]?expiration[_-]?month|card[_-]?expiration[_-]?year|expiry|expiry[_-]?month|expiry[_-]?year|expiration[_-]?month|expiration[_-]?year|redirect[_-]?url|success[_-]?url|cancel[_-]?url|return[_-]?url|callback[_-]?url|failure[_-]?url|error[_-]?url';
 
 /** Alternation of key names that hold a card number (masked to the last four digits). */
 const CARD_NUMBER_ALT = 'card[_-]?number|cardnumber|pan|masked[_-]?credit[_-]?card[_-]?number';
@@ -223,23 +223,69 @@ export function redactString(value: string): string {
   return out;
 }
 
+/** Maximum retained length for a sanitized error name / code. */
+const MAX_NAME_LENGTH = 64;
+const MAX_CODE_LENGTH = 64;
+const SAFE_NAME_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+
 /**
- * Produces a safe, minimal `Error` from an arbitrary thrown value, retaining only a name, a
- * {@link redactString}-sanitized message, and a safe `code` (string/number). It never
- * retains the original error object, its custom properties, request objects, URLs, headers,
- * bodies, or its (potentially sensitive) stack. Returns `undefined` for nullish input.
+ * Sanitizes an error `name` for public surfacing. Accepts only a conservative identifier-like
+ * charset within a length limit, runs {@link redactString} as defense in depth, and otherwise
+ * falls back to `"Error"`. This prevents a hostile error whose `name` embeds a secret (e.g.
+ * `"Bearer SECRET"`) from leaking.
+ */
+export function sanitizeErrorName(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    return 'Error';
+  }
+  const candidate = value.slice(0, MAX_NAME_LENGTH);
+  if (!SAFE_NAME_RE.test(candidate)) {
+    return 'Error';
+  }
+  // If redaction would alter it, it embeds something sensitive — reject.
+  return redactString(candidate) === candidate ? candidate : 'Error';
+}
+
+/**
+ * Sanitizes an error/response `code` for public surfacing. Accepts a string or finite number
+ * (numbers are stringified), enforces a length limit, and drops the code entirely if
+ * {@link redactString} would alter it (i.e. it contains a secret) — surfacing a half-masked
+ * code is worse than surfacing none.
+ */
+export function sanitizeErrorCode(value: unknown): string | undefined {
+  let str: string;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    str = String(value);
+  } else if (typeof value === 'string' && value.length > 0) {
+    str = value;
+  } else {
+    return undefined;
+  }
+  const truncated = str.slice(0, MAX_CODE_LENGTH);
+  // Reject anything outside printable ASCII (control chars, non-ASCII).
+  if (/[^\x20-\x7e]/.test(truncated)) {
+    return undefined;
+  }
+  // Drop the code entirely if sanitization would alter it (it embeds a secret).
+  return redactString(truncated) === truncated ? truncated : undefined;
+}
+
+/**
+ * Produces a safe, minimal `Error` from an arbitrary thrown value, retaining only a sanitized
+ * name, a {@link redactString}-sanitized message, and a sanitized `code`. It never retains the
+ * original error object, its custom properties, request objects, URLs, headers, bodies, or its
+ * (potentially sensitive) stack. Returns `undefined` for nullish input.
  */
 export function sanitizeErrorCause(error: unknown): Error | undefined {
   if (error === undefined || error === null) {
     return undefined;
   }
   if (error instanceof Error) {
-    const name = typeof error.name === 'string' && error.name.length > 0 ? error.name : 'Error';
     const message = typeof error.message === 'string' ? redactString(error.message) : '';
     const safe = new Error(message);
-    safe.name = name;
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === 'string' || typeof code === 'number') {
+    safe.name = sanitizeErrorName(error.name);
+    const code = sanitizeErrorCode((error as { code?: unknown }).code);
+    if (code !== undefined) {
       Object.defineProperty(safe, 'code', { value: code, enumerable: true, configurable: true });
     }
     return safe;

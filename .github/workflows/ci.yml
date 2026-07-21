@@ -40,14 +40,20 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+      - name: Type-level tests (ambiguous result narrowing)
+        run: npm run test:types
+
       - name: Test with coverage
         run: npm run test:coverage
 
       - name: Build
         run: npm run build
 
-      - name: Consumer import smoke test (ESM + CJS)
-        run: npm run smoke
+      - name: Consumer import smoke test (dist)
+        run: npm run smoke:dist
 
       - name: Validate package tarball
         run: npm pack --dry-run
+
+      - name: Packed-package consumer smoke test (installs the .tgz)
+        run: npm run smoke:package

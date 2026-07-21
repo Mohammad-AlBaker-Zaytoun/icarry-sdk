@@ -328,8 +328,26 @@ Fully typed. Import input/result types as needed:
 import type { MerchantRateInput, Country, PackagingSlip, ICarryClientOptions } from 'icarry-sdk';
 ```
 
-Unverified response types are modeled as `ExtensibleResponse` (an open, read-only record) so the SDK
-never pretends to know more than iCarry documents.
+Response types honestly reflect incomplete iCarry documentation:
+
+- High-confidence endpoints (auth, countries, states, warehouses) return concrete typed objects.
+- Endpoints parsed with `expect: 'auto'` (rate/order/shipment creation, tracking, cancellation,
+  payment, MontyPay) return **`AmbiguousApiResult`** — the union of what the parser can actually
+  produce: `object | unknown[] | string | number | boolean | null | undefined`. **Narrow before
+  use**, e.g.:
+
+```typescript
+const result = await icarry.shipments.track('TRACKING_NUMBER'); // AmbiguousApiResult
+if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+  // safe to read fields here
+} else if (typeof result === 'string') {
+  // plain-text response
+} else if (result === undefined) {
+  // empty response
+}
+```
+
+TypeScript will reject `result.someField` without narrowing — this is intentional, not a defect.
 
 ## Security considerations
 
