@@ -104,17 +104,54 @@ try {
   );
   runNode(['cjs.cjs'], tempDir);
 
-  // TypeScript declaration resolution.
+  // TypeScript declaration resolution — with skipLibCheck FALSE so the generated .d.ts files
+  // (as shipped in the tarball) are themselves fully type-checked.
   writeFileSync(
     join(tempDir, 'consumer.ts'),
     [
-      "import { ICarryClient, ICarryApiError } from 'icarry-sdk';",
-      "import type { ICarryClientOptions, MerchantRateInput, AmbiguousApiResult } from 'icarry-sdk';",
-      "const o: ICarryClientOptions = { baseUrl: 'https://x', token: 't' };",
-      'const c = new ICarryClient(o);',
-      'export async function track(): Promise<AmbiguousApiResult> { return c.shipments.track("T"); }',
-      'export const err: typeof ICarryApiError = ICarryApiError;',
-      'export const rate: Partial<MerchantRateInput> = {};',
+      'import {',
+      '  ICarryClient,',
+      '  ICarryApiError,',
+      '  type ICarryClientOptions,',
+      '  type AmbiguousApiResult,',
+      '  type MerchantRateInput,',
+      '  type MarketplaceRateInput,',
+      '  type OnDemandRateInput,',
+      '  type TrackingResult,',
+      '  type PaymentResult,',
+      '  type ICarryHooks,',
+      "} from 'icarry-sdk';",
+      '',
+      'const hooks: ICarryHooks = {',
+      '  onRequest: (info) => void info.method,',
+      '  onHookError: (err) => void err.message,',
+      '};',
+      "const options: ICarryClientOptions = { baseUrl: 'https://test.icarry.com', token: 't', hooks };",
+      'const client = new ICarryClient(options);',
+      '',
+      '// Resource access + ambiguous-result narrowing.',
+      'export async function trackOne(n: string): Promise<string> {',
+      '  const r: TrackingResult = await client.shipments.track(n);',
+      "  if (typeof r === 'string') return r;",
+      "  if (r === null || r === undefined) return 'empty';",
+      "  if (Array.isArray(r)) return 'array';",
+      "  if (typeof r === 'object') return typeof r['status'];",
+      '  return typeof r; // number | boolean',
+      '}',
+      '',
+      'export async function pay(id: number): Promise<PaymentResult> {',
+      '  return client.payments.confirmPayment(id, {});',
+      '}',
+      '',
+      '// Error narrowing.',
+      'export function statusOf(e: unknown): number | undefined {',
+      '  return e instanceof ICarryApiError ? e.status : undefined;',
+      '}',
+      '',
+      '// Request-input types resolve from the package root.',
+      'export const merchant: Partial<MerchantRateInput> = {};',
+      'export const marketplace: Partial<MarketplaceRateInput> = {};',
+      'export const onDemand: Partial<OnDemandRateInput> = {};',
     ].join('\n')
   );
   writeFileSync(
@@ -122,11 +159,11 @@ try {
     JSON.stringify(
       {
         compilerOptions: {
-          module: 'nodenext',
-          moduleResolution: 'nodenext',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
           strict: true,
           noEmit: true,
-          skipLibCheck: true,
+          skipLibCheck: false,
         },
         files: ['consumer.ts'],
       },
@@ -136,7 +173,7 @@ try {
   );
   const tsc = join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
   runNode([tsc, '-p', 'tsconfig.json'], tempDir);
-  console.log('  TypeScript consumer resolves ok');
+  console.log('  TypeScript consumer resolves ok (skipLibCheck: false)');
 
   console.log(`smoke:package OK (icarry-sdk@${version})`);
 } catch (error) {

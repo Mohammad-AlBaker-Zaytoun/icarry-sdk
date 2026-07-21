@@ -8,7 +8,8 @@
 import { ICarryConfigurationError } from './errors';
 import type { ICarryHooks, RetryOptions, RetryPolicy } from './types';
 import { DEFAULT_RETRY_POLICY, DEFAULT_TIMEOUT_MS, USER_AGENT } from './constants';
-import { normalizeBaseUrl } from './transport/url';
+import { validateAndNormalizeBaseUrl, resolveApiRoot } from './transport/url';
+import { isValidHeaderName, isValidHeaderValue } from './transport/headers';
 import type { FetchLike } from './transport/http-client';
 
 /**
@@ -88,6 +89,13 @@ export interface ResolvedConfig {
   auth: ResolvedAuth;
 }
 
+function requireNonNegative(value: number, field: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ICarryConfigurationError(`retry.${field} must be a non-negative finite number.`);
+  }
+  return value;
+}
+
 function resolveRetryPolicy(retry: ICarryClientOptions['retry']): RetryPolicy {
   if (retry === false) {
     return { ...DEFAULT_RETRY_POLICY, maxRetries: 0 };
@@ -95,12 +103,45 @@ function resolveRetryPolicy(retry: ICarryClientOptions['retry']): RetryPolicy {
   if (retry === true || retry === undefined) {
     return { ...DEFAULT_RETRY_POLICY };
   }
+  const maxRetries = retry.maxRetries ?? DEFAULT_RETRY_POLICY.maxRetries;
+  if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+    throw new ICarryConfigurationError('retry.maxRetries must be a non-negative integer.');
+  }
+  const statuses = retry.retryableStatuses ?? DEFAULT_RETRY_POLICY.retryableStatuses;
+  if (
+    !Array.isArray(statuses) ||
+    !statuses.every((s) => Number.isInteger(s) && s >= 100 && s <= 599)
+  ) {
+    throw new ICarryConfigurationError(
+      'retry.retryableStatuses must be an array of HTTP status codes (integers 100–599).'
+    );
+  }
   return {
-    maxRetries: retry.maxRetries ?? DEFAULT_RETRY_POLICY.maxRetries,
-    baseDelayMs: retry.baseDelayMs ?? DEFAULT_RETRY_POLICY.baseDelayMs,
-    maxDelayMs: retry.maxDelayMs ?? DEFAULT_RETRY_POLICY.maxDelayMs,
-    retryableStatuses: retry.retryableStatuses ?? DEFAULT_RETRY_POLICY.retryableStatuses,
+    maxRetries,
+    baseDelayMs: requireNonNegative(
+      retry.baseDelayMs ?? DEFAULT_RETRY_POLICY.baseDelayMs,
+      'baseDelayMs'
+    ),
+    maxDelayMs: requireNonNegative(
+      retry.maxDelayMs ?? DEFAULT_RETRY_POLICY.maxDelayMs,
+      'maxDelayMs'
+    ),
+    retryableStatuses: statuses,
   };
+}
+
+/** Validates caller-supplied headers against header-injection (no bad names / CR-LF values). */
+function validateHeaders(headers: Record<string, string>): void {
+  for (const [name, value] of Object.entries(headers)) {
+    if (!isValidHeaderName(name)) {
+      throw new ICarryConfigurationError('A configured header name is not a valid HTTP token.');
+    }
+    if (!isValidHeaderValue(value)) {
+      throw new ICarryConfigurationError(
+        `Header "${name}" has an invalid value (control characters such as CR/LF are not allowed).`
+      );
+    }
+  }
 }
 
 function resolveAuth(options: ICarryClientOptions): ResolvedAuth {
@@ -162,13 +203,11 @@ export function normalizeConfig(options: ICarryClientOptions): ResolvedConfig {
   if (!options || typeof options !== 'object') {
     throw new ICarryConfigurationError('ICarryClient requires an options object.');
   }
-  if (typeof options.baseUrl !== 'string' || options.baseUrl.trim() === '') {
-    throw new ICarryConfigurationError('baseUrl is required and must be a non-empty string.');
-  }
-  const baseUrl = normalizeBaseUrl(options.baseUrl);
-  if (!/^https?:\/\//i.test(baseUrl)) {
-    throw new ICarryConfigurationError('baseUrl must be an absolute http(s) URL.');
-  }
+  // Strict WHATWG-URL validation: canonical origin+path only, no credentials/query/fragment.
+  const baseUrl = validateAndNormalizeBaseUrl(options.baseUrl);
+  // Confirm the effective API root resolves safely (origin preserved, prefix once, no query/hash).
+  resolveApiRoot(baseUrl);
+
   if (
     options.timeoutMs !== undefined &&
     (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)
@@ -176,13 +215,22 @@ export function normalizeConfig(options: ICarryClientOptions): ResolvedConfig {
     throw new ICarryConfigurationError('timeoutMs must be a positive number.');
   }
 
+  if (options.userAgent !== undefined && !isValidHeaderValue(options.userAgent)) {
+    throw new ICarryConfigurationError(
+      'userAgent must not contain control characters (CR/LF/NUL are not allowed).'
+    );
+  }
+
+  const defaultHeaders = { ...(options.headers ?? {}) };
+  validateHeaders(defaultHeaders);
+
   return {
     baseUrl,
     fetch: resolveFetch(options.fetch),
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     retryPolicy: resolveRetryPolicy(options.retry),
     hooks: options.hooks ?? {},
-    defaultHeaders: { ...(options.headers ?? {}) },
+    defaultHeaders,
     userAgent: options.userAgent ?? USER_AGENT,
     autoReauth: options.autoReauth ?? true,
     redactEmail: options.redactEmail ?? false,

@@ -12,7 +12,7 @@ import { normalizeConfig, type ICarryClientOptions } from './config';
 import { ICarryValidationError } from './errors';
 import { HttpClient, type RequestSpec } from './transport/http-client';
 import { TokenManager } from './transport/token-manager';
-import { validateRelativeApiPath } from './transport/url';
+import { validateRelativeApiPath, sanitizeBaseUrlForDisplay } from './transport/url';
 import { AuthResource } from './resources/auth';
 import { WarehousesResource } from './resources/warehouses';
 import { CountriesResource } from './resources/countries';
@@ -121,19 +121,19 @@ export class ICarryClient {
     this.shipments = new ShipmentsResource(http);
   }
 
-  /** The resolved base URL. */
+  /** The resolved, canonical base URL (credentials/query/fragment can never appear). */
   getBaseUrl(): string {
-    return this.#baseUrl;
+    return sanitizeBaseUrlForDisplay(this.#baseUrl);
   }
 
   /** Safe representation — never exposes credentials, tokens, or transport internals. */
   toJSON(): Record<string, unknown> {
-    return { name: 'ICarryClient', baseUrl: this.#baseUrl };
+    return { name: 'ICarryClient', baseUrl: sanitizeBaseUrlForDisplay(this.#baseUrl) };
   }
 
   /** Safe, non-sensitive string form. */
   toString(): string {
-    return `ICarryClient(${this.#baseUrl})`;
+    return `ICarryClient(${sanitizeBaseUrlForDisplay(this.#baseUrl)})`;
   }
 
   /** Node's `util.inspect` hook (well-known symbol; no `node:util` import needed). */

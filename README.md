@@ -151,6 +151,14 @@ icarry.auth.clearToken();       // clear the cache
 test environment is `https://test.icarry.com/api-frontend`. Production/regional base URLs are not
 clearly documented by iCarry — confirm yours before going live.
 
+The base URL is validated strictly at construction (parsed with the WHATWG `URL` API). It must be
+an absolute **`https`** URL with **no** embedded credentials, query string, or fragment; plain
+`http` is accepted only for local development hosts (`localhost`, `127.0.0.1`, `[::1]`). Anything
+else (e.g. `https://user:pass@host`, `https://host?token=…`, `//host`, `javascript:`/`data:`/
+`file:`/`ftp:` schemes) throws an `ICarryConfigurationError`. Client inspection methods
+(`getBaseUrl()`, `toJSON()`, `toString()`) always return a sanitized value with no credentials,
+query, or fragment.
+
 ## Merchant flow
 
 COD rate estimation and order creation using a country **code** + free-text drop-off location.
@@ -461,14 +469,22 @@ npm test            # unit tests (mocked fetch; no live credentials)
 npm run test:coverage
 ```
 
-An optional live smoke suite is gated behind environment variables and disabled by default:
+An optional live-contract suite is gated behind environment variables and disabled by default. It
+accepts either connector credentials or a pre-obtained token:
 
 ```bash
 ICARRY_LIVE_TESTS=true ICARRY_BASE_URL=... ICARRY_EMAIL=... ICARRY_PASSWORD=... npm test
+# or
+ICARRY_LIVE_TESTS=true ICARRY_BASE_URL=... ICARRY_TOKEN=... npm test
 ```
 
-The live suite never runs in CI, never uses real card data, and gates any mutating/paid operation
-behind an additional explicit opt-in.
+Every included live check is **read-only** (auth, countries, states, warehouses; optional tracking
+and packaging-slip checks run only when `ICARRY_TEST_TRACKING_NUMBER` / `ICARRY_TEST_SHIPMENT_ID`
+are supplied). It never runs in CI and never uses real card data. Any future mutating or paid check
+requires a second explicit opt-in (`ICARRY_ALLOW_MUTATIONS=true` / `ICARRY_ALLOW_PAYMENT_TESTS=true`)
+and none ship enabled. The suite can log a privacy-preserving `summarizeShape` of provisional
+responses — value **kinds** and property **names** only, never values, ids, or PII — to help tighten
+the still-unverified response types over time.
 
 ## Contributing
 

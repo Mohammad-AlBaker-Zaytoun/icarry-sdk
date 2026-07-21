@@ -6,6 +6,74 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.3] - Configuration and release hardening
+
+A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing, retry policy,
+authentication modes, ESM/CJS output, and zero runtime dependencies are preserved. There is no
+public API or runtime-behavior change for valid configurations; invalid `baseUrl`, header, and
+retry inputs are now rejected earlier and more strictly at construction time.
+
+### Security
+
+- **Strict WHATWG-URL `baseUrl` validation.** The base URL is parsed with the WHATWG `URL` API
+  (never a bare regex) and canonicalized to `scheme://host[:port][/path]` with no credentials,
+  query string, or fragment. Rejected: embedded credentials (`https://user:pass@host`), query
+  strings (`?token=...`), fragments (`#...`), protocol-relative (`//host`) and backslash
+  authorities, control characters, and non-http(s) schemes (`javascript:`, `data:`, `file:`,
+  `ftp:`). Plain `http` is allowed only for local development hosts (`localhost`, `127.0.0.1`,
+  `[::1]`); every remote host must use `https`.
+- **Shared, safe API-root resolution.** A single `resolveApiRoot` helper builds the effective
+  `/api-frontend` root (appended at most once) and verifies the origin is unchanged with no
+  query/fragment. Configuration validation and the transport's prefix-containment check now share
+  it, so URL normalization can never diverge between the two paths.
+- **Header and `User-Agent` injection prevented.** Configured default headers, the `User-Agent`,
+  and per-call headers are validated: names must be RFC 7230 tokens and values must contain no
+  CR, LF, NUL, or other control characters, blocking header/response splitting.
+- **Defense-in-depth inspection safety.** Public client inspection (`getBaseUrl()`, `toJSON()`,
+  `toString()`, and the Node inspect hook) routes the base URL through a display sanitizer that
+  strips any credentials, query, and fragment, so an unsafe value could not leak even if
+  configuration validation were bypassed.
+
+### Fixed
+
+- Retry configuration is now validated at construction: `maxRetries` must be a non-negative
+  integer, `retryableStatuses` must be integer HTTP codes in 100–599, and `baseDelayMs` /
+  `maxDelayMs` must be non-negative finite numbers. Invalid values raise
+  `ICarryConfigurationError` instead of misbehaving at request time.
+
+### Validation
+
+- New `validate:release` script runs the full `validate` gate plus `npm pack --dry-run` and the
+  packed-package consumer smoke test. `smoke:dist` is now part of `validate`. `prepublishOnly`
+  remains a single, non-recursive `validate` run; the packed-package test uses
+  `npm pack --ignore-scripts` to avoid re-entering the publish lifecycle.
+- The packed-package smoke test now type-checks the consumer with `skipLibCheck: false` and
+  exercises a broader public type surface (client options, ambiguous-result narrowing, hooks,
+  the three rate-input models, tracking/payment results, and error narrowing).
+
+### Tests
+
+- Added suites for base-URL validation (every documented reject/accept case and inspection
+  safety), `resolveApiRoot`, header/`User-Agent` CR-LF injection, and retry-policy validation.
+- Added an optional, env-gated live-contract test foundation (`ICARRY_LIVE_TESTS=true`) with a
+  privacy-preserving `summarizeShape` helper that records only value kinds and property names —
+  never values, ids, names, addresses, emails, phone numbers, tracking numbers, tokens, card
+  data, or full response bodies. Every included live check is read-only; mutating and payment
+  checks remain opt-in behind `ICARRY_ALLOW_MUTATIONS=true` / `ICARRY_ALLOW_PAYMENT_TESTS=true`
+  and ship with none enabled.
+
+### Documentation
+
+- README/`SECURITY.md` note the strict `baseUrl` policy (https-only except local hosts; no
+  credentials/query/fragment) and document the env-gated live-contract tests and their privacy
+  guarantees.
+
+### Release
+
+- The `v0.1.0`, `v0.1.1`, and `v0.1.2` git tags have since been created and pushed at their exact
+  published commits, resolving the historical-tag gap noted under 0.1.2. This change does **not**
+  create a `v0.1.3` tag.
+
 ## [0.1.2] - Type accuracy & boundary hardening
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing, retry
@@ -50,7 +118,9 @@ correctness-driven type broadening (see Types).
   must narrow (e.g. `typeof result === 'object' && result !== null`) before treating an ambiguous
   result as an object. High-confidence endpoints (auth, countries, states, warehouses) are
   unchanged. This reflects incomplete iCarry documentation and is shipped as a **patch-level
-  correctness fix**; code that previously assumed an object may now require narrowing to compile.
+  correctness fix**. The change is **compile-time only and runtime-compatible** — the parsed
+  runtime payload is identical to 0.1.1; only TypeScript consumers that treated an ambiguous
+  result as an object without narrowing are affected, and they need only add a narrowing check.
 
 ### Tests
 
@@ -64,10 +134,12 @@ correctness-driven type broadening (see Types).
 
 ### Release
 
-- No `v0.1.0` or `v0.1.1` git tags existed (locally or on the remote). Their exact published
-  commits (npm `gitHead`) are `1aa12aecf84500a719be4acb12fb4338b0620416` (0.1.0) and
-  `73656669afb4501790d93ef6fc0351766aed9fbe` (0.1.1); recommended manual tag commands are in the
-  release notes for this task. CI now builds, packs, and runs the packed-package smoke test.
+- At the time of the 0.1.2 work no `v0.1.0` or `v0.1.1` git tags existed (locally or on the
+  remote). Their exact published commits (npm `gitHead`) are
+  `1aa12aecf84500a719be4acb12fb4338b0620416` (0.1.0) and
+  `73656669afb4501790d93ef6fc0351766aed9fbe` (0.1.1). These tags — along with `v0.1.2` — have
+  since been created and pushed at those commits (see 0.1.3 → Release). CI now builds, packs, and
+  runs the packed-package smoke test.
 
 ## [0.1.1] - Security hardening & reliability
 
@@ -151,7 +223,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/releases/tag/v0.1.0

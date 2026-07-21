@@ -55,5 +55,8 @@ jobs:
       - name: Validate package tarball
         run: npm pack --dry-run
 
+      # The packed-package install test is expensive; run it once on a maintained LTS (Node 22)
+      # rather than on every matrix entry. Standard validation still runs on 18/20/22 above.
       - name: Packed-package consumer smoke test (installs the .tgz)
+        if: matrix.node-version == 22
         run: npm run smoke:package

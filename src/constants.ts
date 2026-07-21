@@ -7,7 +7,7 @@
 import type { RetryPolicy } from './types';
 
 /** SDK version, mirrored into the default `User-Agent`. Keep in sync with package.json. */
-export const SDK_VERSION = '0.1.2';
+export const SDK_VERSION = '0.1.3';
 
 /**
  * The API path segment iCarry mounts every route under. The client appends this to the

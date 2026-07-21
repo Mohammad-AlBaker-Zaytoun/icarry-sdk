@@ -111,4 +111,83 @@ describe('normalizeConfig', () => {
       normalizeConfig({ baseUrl: 'https://x.com', token: 't', timeoutMs: 0, fetch: fetchStub })
     ).toThrow(ICarryConfigurationError);
   });
+
+  it('rejects remote http but allows local http', () => {
+    expect(() =>
+      normalizeConfig({ baseUrl: 'http://test.icarry.com', token: 't', fetch: fetchStub })
+    ).toThrow(ICarryConfigurationError);
+    expect(
+      normalizeConfig({ baseUrl: 'http://localhost:3000', token: 't', fetch: fetchStub }).baseUrl
+    ).toBe('http://localhost:3000');
+  });
+
+  it('rejects a baseUrl with credentials, query, or fragment', () => {
+    for (const bad of ['https://u:p@x.com', 'https://x.com?token=secret', 'https://x.com#frag']) {
+      expect(() => normalizeConfig({ baseUrl: bad, token: 't', fetch: fetchStub })).toThrow(
+        ICarryConfigurationError
+      );
+    }
+  });
+
+  it('rejects invalid retry policy values', () => {
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        retry: { maxRetries: -1 },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        retry: { maxRetries: 1.5 },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        retry: { retryableStatuses: [99] },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        retry: { baseDelayMs: -5 },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+  });
+
+  it('rejects a userAgent or headers containing CR/LF', () => {
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        userAgent: 'evil\r\nX-Injected: 1',
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        headers: { 'X-Trace': 'ok\r\nX-Injected: 1' },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+    expect(() =>
+      normalizeConfig({
+        baseUrl: 'https://x.com',
+        token: 't',
+        headers: { 'Bad Name': 'ok' },
+        fetch: fetchStub,
+      })
+    ).toThrow(ICarryConfigurationError);
+  });
 });

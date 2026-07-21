@@ -31,7 +31,8 @@ import type {
 } from '../types';
 import { API_PREFIX } from '../constants';
 import { TokenManager } from './token-manager';
-import { joinPath, sanitizePathForMetadata } from './url';
+import { joinPath, sanitizePathForMetadata, resolveApiRoot } from './url';
+import { isValidHeaderName, isValidHeaderValue } from './headers';
 import { buildQuery, type QueryParams } from './query';
 import { parseResponse, type Expect, type ParsedResponse } from './response-parser';
 import {
@@ -274,6 +275,13 @@ export class HttpClient {
     }
     if (spec.headers) {
       for (const [name, value] of Object.entries(spec.headers)) {
+        // Per-call headers are untrusted: reject header-injection attempts before sending.
+        if (!isValidHeaderName(name) || !isValidHeaderValue(value)) {
+          throw new ICarryValidationError(
+            'A per-call header has an invalid name or a value containing control characters.',
+            'headers'
+          );
+        }
         put(name, value);
       }
     }
@@ -282,7 +290,14 @@ export class HttpClient {
       put('Content-Type', 'application/json');
     }
     if (token !== undefined) {
-      put('Authorization', `Bearer ${token}`);
+      const authValue = `Bearer ${token}`;
+      if (!isValidHeaderValue(authValue)) {
+        // A token containing CR/LF must never be placed into a header.
+        throw new ICarryAuthenticationError(
+          'The bearer token contains characters that are invalid in an HTTP header.'
+        );
+      }
+      put('Authorization', authValue);
     }
 
     const out: Record<string, string> = {};
@@ -493,7 +508,8 @@ function assertWithinApiPrefix(fullUrl: string, baseUrl: string): void {
   let apiRoot: URL;
   let finalUrl: URL;
   try {
-    apiRoot = new URL(joinPath(baseUrl, API_PREFIX, '/'));
+    // Shared resolver — same normalization used by config validation, so logic never diverges.
+    apiRoot = resolveApiRoot(baseUrl);
     finalUrl = new URL(fullUrl);
   } catch {
     throw new ICarryValidationError('Request URL could not be constructed safely.', 'path');

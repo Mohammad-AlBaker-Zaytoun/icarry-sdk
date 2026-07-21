@@ -74,6 +74,14 @@ Hook payloads are deep-frozen; `onHookError` receives a sanitized `SafeHookError
 Use `https` base URLs and callback/redirect URLs only. Plain `http` allows credentials and card
 parameters to be intercepted in transit.
 
+The `baseUrl` is validated strictly at construction with the WHATWG `URL` API and canonicalized to
+`scheme://host[:port][/path]`. Embedded credentials, query strings, and fragments are rejected, as
+are protocol-relative URLs and non-http(s) schemes (`javascript:`, `data:`, `file:`, `ftp:`). Plain
+`http` is permitted only for local development hosts (`localhost`, `127.0.0.1`, `[::1]`); every
+remote host must use `https`. Header names/values and the `User-Agent` are validated to reject CR,
+LF, NUL, and other control characters, preventing header/response splitting. Client inspection
+methods never expose credentials, query strings, or fragments from the configured URL.
+
 ## Dependency security
 
 `icarry-sdk` has **zero runtime dependencies**, eliminating transitive supply-chain risk at runtime.

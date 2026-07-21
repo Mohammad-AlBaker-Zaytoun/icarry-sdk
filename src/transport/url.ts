@@ -5,6 +5,9 @@
  * @packageDocumentation
  */
 
+import { ICarryConfigurationError } from '../errors';
+import { API_PREFIX } from '../constants';
+
 /**
  * Normalizes a configured base URL: trims surrounding whitespace and removes any trailing
  * slashes. Does not validate the scheme (that is the config layer's job) beyond trimming.
@@ -164,4 +167,137 @@ export function sanitizePathForMetadata(path: string): string {
     out = out.slice(0, query);
   }
   return stripControlChars(out);
+}
+
+/** Hosts for which plain `http` is permitted (local development only). */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function isLocalHost(hostname: string): boolean {
+  return LOCAL_HOSTS.has(hostname.toLowerCase());
+}
+
+/**
+ * Strictly validates and canonicalizes a configured `baseUrl` using the WHATWG `URL` parser
+ * (never a bare regex). Returns `scheme://host[:port][/path]` with **no** credentials, query
+ * string, or fragment. `http` is allowed only for local hosts; all remote hosts must use
+ * `https`. Rejects non-strings, empty/relative/protocol-relative URLs, embedded credentials,
+ * query/hash, control characters, backslashes, unsupported protocols, and origin drift.
+ *
+ * @throws {@link ICarryConfigurationError} on any unsafe or invalid input.
+ */
+export function validateAndNormalizeBaseUrl(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new ICarryConfigurationError('baseUrl is required and must be a non-empty string.');
+  }
+  const trimmed = raw.trim();
+  if (hasControlChar(trimmed)) {
+    throw new ICarryConfigurationError('baseUrl must not contain control characters.');
+  }
+  if (trimmed.includes('\\')) {
+    throw new ICarryConfigurationError('baseUrl must not contain backslashes.');
+  }
+  if (trimmed.startsWith('//')) {
+    throw new ICarryConfigurationError(
+      'baseUrl must not be protocol-relative; provide an absolute http(s) URL.'
+    );
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new ICarryConfigurationError('baseUrl must be a valid absolute http(s) URL.');
+  }
+
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new ICarryConfigurationError(
+      `baseUrl protocol must be http or https (got "${url.protocol.replace(/:$/, '')}").`
+    );
+  }
+  if (url.username !== '' || url.password !== '') {
+    throw new ICarryConfigurationError(
+      'baseUrl must not contain embedded credentials (username/password).'
+    );
+  }
+  if (url.search !== '') {
+    throw new ICarryConfigurationError('baseUrl must not contain a query string.');
+  }
+  if (url.hash !== '') {
+    throw new ICarryConfigurationError('baseUrl must not contain a fragment.');
+  }
+  if (url.hostname === '') {
+    throw new ICarryConfigurationError('baseUrl must include a host.');
+  }
+  if (url.protocol === 'http:' && !isLocalHost(url.hostname)) {
+    throw new ICarryConfigurationError(
+      'baseUrl must use https for non-local hosts (http is allowed only for localhost, 127.0.0.1, and [::1]).'
+    );
+  }
+
+  const path = url.pathname.replace(/\/+$/, '');
+  const canonical = `${url.origin}${path}`;
+  let check: URL;
+  try {
+    check = new URL(canonical);
+  } catch {
+    throw new ICarryConfigurationError('baseUrl could not be safely normalized.');
+  }
+  if (check.origin !== url.origin) {
+    throw new ICarryConfigurationError(
+      'baseUrl origin changed after normalization; refusing to use it.'
+    );
+  }
+  return canonical;
+}
+
+/**
+ * Resolves the effective API root (`origin` + the `/api-frontend` prefix, added at most once)
+ * as a `URL`, verifying the origin is unchanged and there is no query/fragment. Shared by
+ * config validation and the transport's prefix-containment check so normalization never
+ * diverges.
+ *
+ * @throws {@link ICarryConfigurationError} if the API root cannot be resolved safely.
+ */
+export function resolveApiRoot(baseUrl: string, apiPrefix: string = API_PREFIX): URL {
+  let base: URL;
+  try {
+    base = new URL(baseUrl);
+  } catch {
+    throw new ICarryConfigurationError('baseUrl could not be parsed into an API root.');
+  }
+  const prefix = `/${apiPrefix.replace(/^\/+|\/+$/g, '')}`;
+  const basePath = base.pathname.replace(/\/+$/, '');
+  const rootPath = basePath.toLowerCase().endsWith(prefix.toLowerCase())
+    ? basePath
+    : `${basePath}${prefix}`;
+  let root: URL;
+  try {
+    root = new URL(`${base.origin}${rootPath}`);
+  } catch {
+    throw new ICarryConfigurationError('Could not resolve a safe API root URL.');
+  }
+  if (root.origin !== base.origin || root.search !== '' || root.hash !== '') {
+    throw new ICarryConfigurationError(
+      'Resolved API root is unsafe (origin/query/fragment mismatch).'
+    );
+  }
+  return root;
+}
+
+/**
+ * Defense-in-depth: returns a display-safe base URL (`scheme://host[:port][/path]`) with any
+ * credentials, query string, and fragment removed. Idempotent for already-canonical input.
+ * Used by the public client inspection methods so an unsafe value could never leak even if
+ * configuration validation were bypassed.
+ */
+export function sanitizeBaseUrlForDisplay(value: string): string {
+  try {
+    const u = new URL(value);
+    const path = u.pathname.replace(/\/+$/, '');
+    return `${u.protocol}//${u.host}${path}`;
+  } catch {
+    const beforeHash = value.split('#', 1)[0] ?? value;
+    const beforeQuery = beforeHash.split('?', 1)[0] ?? beforeHash;
+    return stripControlChars(beforeQuery.trim());
+  }
 }
