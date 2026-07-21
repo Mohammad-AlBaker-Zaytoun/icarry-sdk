@@ -8,6 +8,8 @@ import {
   toRequestFields,
   requireNonEmptyString,
   requirePositiveId,
+  requirePositiveInteger,
+  requireAbsoluteHttpsUrl,
   requirePositiveMeasure,
   requireNonNegativeMoney,
   validateGeoPoint,
@@ -76,13 +78,36 @@ describe('_shared validators', () => {
     expect(() => requireNonEmptyString(undefined, 'f')).toThrow(ICarryValidationError);
   });
 
-  it('requirePositiveId accepts positive numbers and non-empty strings', () => {
+  it('requirePositiveId accepts positive integers and integer strings only', () => {
     expect(() => requirePositiveId(5, 'id')).not.toThrow();
-    expect(() => requirePositiveId('abc', 'id')).not.toThrow();
+    expect(() => requirePositiveId('1837', 'id')).not.toThrow();
+    // Rejections: alphabetic, decimal, zero, negative, empty, nullish, Infinity/NaN.
+    expect(() => requirePositiveId('abc', 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId('1.2', 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId(1.2, 'id')).toThrow(ICarryValidationError);
     expect(() => requirePositiveId(0, 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId('0', 'id')).toThrow(ICarryValidationError);
     expect(() => requirePositiveId(-1, 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId('-1', 'id')).toThrow(ICarryValidationError);
     expect(() => requirePositiveId('', 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId(Number.NaN, 'id')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveId(Number.POSITIVE_INFINITY, 'id')).toThrow(ICarryValidationError);
     expect(() => requirePositiveId(null as unknown as number, 'id')).toThrow(ICarryValidationError);
+  });
+
+  it('requirePositiveInteger rejects non-integers', () => {
+    expect(() => requirePositiveInteger(3, 'q')).not.toThrow();
+    expect(() => requirePositiveInteger(1.5, 'q')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveInteger(0, 'q')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveInteger(-2, 'q')).toThrow(ICarryValidationError);
+    expect(() => requirePositiveInteger('3' as unknown, 'q')).toThrow(ICarryValidationError);
+  });
+
+  it('requireAbsoluteHttpsUrl accepts https and localhost http only', () => {
+    expect(() => requireAbsoluteHttpsUrl('https://x.com/ok', 'u')).not.toThrow();
+    expect(() => requireAbsoluteHttpsUrl('http://localhost:8080/cb', 'u')).not.toThrow();
+    expect(() => requireAbsoluteHttpsUrl('http://evil.com/cb', 'u')).toThrow(ICarryValidationError);
+    expect(() => requireAbsoluteHttpsUrl('not-a-url', 'u')).toThrow(ICarryValidationError);
   });
 
   it('requirePositiveMeasure accepts numbers and numeric strings', () => {

@@ -44,12 +44,30 @@ servers.
 - Never treat a MontyPay return call as proof of payment — the SDK verifies **no** callback signature
   (iCarry documents none). Verify payment/order status server-side.
 
-## Redaction
+## Redaction and sanitization
 
-The SDK masks sensitive keys (case-insensitive) — passwords, tokens, `authorization`, card numbers
-(kept to last 4 only), CVV/security codes (fully removed), expiry, and cardholder name/type — anywhere
-it surfaces request or error data. This protects the SDK's own output; it cannot protect data that
-**you** log or store from the original inputs.
+The SDK sanitizes known sensitive values at its own logging and error boundaries, using one shared
+set of sensitive-key definitions across three surfaces:
+
+- **Structured values** (hook payloads, error `details`): sensitive keys (case-insensitive) are
+  masked — passwords, tokens, `authorization`, card numbers (kept to last 4 only), CVV/security codes
+  (fully removed), expiry, and cardholder name/type.
+- **URLs**: sensitive query-parameter values (e.g. the payment card parameters) are masked; the
+  serialized payment URL is never surfaced in errors or hooks.
+- **Free-form strings** (error messages, error causes): embedded URLs, `Bearer` tokens,
+  `key=value`/`"key":"value"` secrets, and card-number-like digit runs are masked. Error `cause` is a
+  minimal sanitized `Error` (name + redacted message + safe code) — never the raw thrown object.
+
+**Limits of these guarantees — the SDK cannot:**
+
+- Control URL or request logging performed at the HTTP or infrastructure layer (proxies, gateways,
+  servers), or by a custom `fetch` you inject. Ensure such layers do not log query strings.
+- Protect original input values that **you** log or store yourself.
+- Protect against malicious code running in the same process. Credentials and tokens are held in
+  runtime-private (`#`) fields, which prevent *accidental* exposure through `console`,
+  `JSON.stringify`, `Object.keys`, and `util.inspect`, but are not an in-process security boundary.
+
+Hook payloads are deep-frozen; `onHookError` receives a sanitized `SafeHookError`, not the raw error.
 
 ## Transport security
 

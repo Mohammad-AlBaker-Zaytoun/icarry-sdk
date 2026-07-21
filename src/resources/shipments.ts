@@ -54,6 +54,7 @@ export class ShipmentsResource {
       method: 'GET',
       path: ENDPOINTS.orderTracking,
       query: { trackingNumber },
+      expect: 'auto',
       retryable: true,
       ...toRequestFields(options),
     });
@@ -71,6 +72,7 @@ export class ShipmentsResource {
       method: 'GET',
       path: ENDPOINTS.cancelOrder,
       query: { trackingNumber },
+      expect: 'auto',
       retryable: false, // mutating GET — do not retry
       ...toRequestFields(options),
     });

@@ -27,6 +27,7 @@ import {
   toRequestFields,
   requireNonEmptyString,
   requirePositiveId,
+  requirePositiveInteger,
   requirePositiveMeasure,
   requireNonNegativeMoney,
   validateDimensions,
@@ -194,6 +195,7 @@ export class OnDemandResource {
       method: 'POST',
       path: ENDPOINTS.onDemandEstimateRates,
       body: toWireOnDemandRate(input),
+      expect: 'auto',
       retryable: options.retry === true,
       ...toRequestFields(options),
     });
@@ -212,10 +214,14 @@ export class OnDemandResource {
     requireNonEmptyString(input.provider, 'provider');
     requireNonEmptyString(input.methodName, 'methodName');
     requirePositiveMeasure(input.price, 'price');
+    requirePositiveInteger(input.parcel?.quantity, 'parcel.quantity');
+    requireNonNegativeMoney(input.parcel?.packageValue, 'parcel.packageValue');
+    requireNonEmptyString(input.parcel?.currency, 'parcel.currency');
     return this.http.request<OnDemandShipmentResult>({
       method: 'POST',
       path: ENDPOINTS.onDemandCreateShipment,
       body: toWireOnDemandCreateShipment(input),
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });

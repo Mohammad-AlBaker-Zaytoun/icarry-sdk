@@ -37,6 +37,16 @@ well iCarry's docs pin down the request/response contract.
 The docs' **Platform Plugins** sections — Shopify, WooCommerce, Magento, OpenCart, MANSATI — are
 prose/integration guides, not callable REST routes. They are out of scope for this SDK.
 
+## Response parsing (content-type driven)
+
+Endpoints with **High** response confidence (auth, warehouses, countries) parse with strict
+`expect: 'json'`. Endpoints with **Low/Med** confidence (all `estimateRates`, `createOrder`,
+`createShipment`, payment, MontyPay, `track`, `cancel`) parse with `expect: 'auto'`: JSON content
+types parse as JSON; `text/*` and JSON strings return as-is; empty bodies return `undefined`; a
+missing/misleading content type is read as text and JSON-parsed only if it parses. These endpoints
+therefore never raise `ICarryResponseParseError` for a successful plain-text body. `getPackagingSlip`
+returns a binary-or-JSON discriminated union based on the response content type.
+
 ## Requires live verification
 
 The following cannot be confirmed without live iCarry test credentials and are modeled defensively:

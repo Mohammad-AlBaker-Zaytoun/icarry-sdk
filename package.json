@@ -1,6 +1,6 @@
 {
   "name": "icarry-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial iCarry shipping & logistics API client for Node.js — type-safe, secure, zero dependencies",
   "author": "Zaytoun Solutions <info@zaytounsolutions.com>",
   "license": "MIT",
@@ -70,7 +70,9 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "check:secrets": "node scripts/check-forbidden.mjs",
-    "prepublishOnly": "npm run typecheck && npm run lint && npm run build && npm test"
+    "smoke": "node scripts/smoke.mjs",
+    "validate": "npm run format:check && npm run lint && npm run typecheck && npm run check:secrets && npm run test:coverage && npm run build",
+    "prepublishOnly": "npm run validate"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

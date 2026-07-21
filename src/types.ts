@@ -151,15 +151,34 @@ export interface RetryEvent {
   status?: number;
 }
 
+/** The phase in which a hook error occurred. */
+export type HookPhase = 'request' | 'response' | 'retry';
+
 /**
- * Optional observability hooks. Every hook receives **redacted, frozen** data and its
- * throwing never fails the underlying request — hook errors are swallowed and, if
- * provided, routed to {@link ICarryHooks.onHookError}.
+ * A sanitized, minimal representation of an error thrown by a hook. Passed to
+ * {@link ICarryHooks.onHookError} instead of the raw thrown object so that sensitive values
+ * embedded in a hook's error can never reach the error sink.
+ */
+export interface SafeHookError {
+  name: string;
+  /** Sanitized error message. */
+  message: string;
+  /** Safe error code, when the original error carried one. */
+  code?: string;
+}
+
+/**
+ * Optional observability hooks. Every hook receives **redacted, deep-frozen** data and its
+ * throwing never fails the underlying request — hook errors are swallowed and, if provided,
+ * routed (sanitized) to {@link ICarryHooks.onHookError}.
  */
 export interface ICarryHooks {
   onRequest?(info: Readonly<SafeRequestInfo>): void | Promise<void>;
   onResponse?(info: Readonly<SafeResponseInfo>): void | Promise<void>;
   onRetry?(event: Readonly<RetryEvent>): void | Promise<void>;
-  /** Invoked (best-effort) when one of the other hooks throws. */
-  onHookError?(error: unknown, phase: 'request' | 'response' | 'retry'): void;
+  /**
+   * Invoked (best-effort) when one of the other hooks throws. Receives a **sanitized**
+   * {@link SafeHookError}, never the raw thrown object.
+   */
+  onHookError?(error: Readonly<SafeHookError>, phase: HookPhase): void;
 }

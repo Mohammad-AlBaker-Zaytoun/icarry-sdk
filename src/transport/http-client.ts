@@ -2,9 +2,10 @@
  * The HTTP transport orchestrator.
  *
  * A single {@link HttpClient.request} drives the full request lifecycle for every resource:
- * lazy/deduped auth → URL + header assembly (never mutating caller input) → fetch with a
- * combined timeout/abort signal → content-type-driven parsing → redacted hooks → typed
- * error mapping → bounded transient retry → one-time ownership-gated `401` re-auth.
+ * lazy/deduped auth → normalized header assembly (never mutating caller input) → fetch with
+ * a combined timeout/abort signal → content-type-driven parsing → deep-frozen redacted hooks
+ * → sanitized typed-error mapping → bounded transient retry → one-time ownership-gated `401`
+ * re-auth.
  *
  * @packageDocumentation
  */
@@ -28,10 +29,11 @@ import type {
 } from '../types';
 import { API_PREFIX } from '../constants';
 import { TokenManager } from './token-manager';
-import { joinPath } from './url';
+import { joinPath, sanitizePathForMetadata } from './url';
 import { buildQuery, type QueryParams } from './query';
 import { parseResponse, type Expect, type ParsedResponse } from './response-parser';
-import { redact, redactUrl } from './redaction';
+import { redact, redactUrl, redactString, sanitizeErrorCause } from './redaction';
+import { deepFreeze } from './freeze';
 import { isRetryableStatus, isTransientError, parseRetryAfter, computeDelay } from './retry';
 import { runRequestHook, runResponseHook, runRetryHook } from './hooks';
 
@@ -41,7 +43,7 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 /** A single request description handed to {@link HttpClient.request}. */
 export interface RequestSpec {
   method: 'GET' | 'POST';
-  /** Endpoint path relative to the API prefix (leading slash optional). */
+  /** Endpoint path relative to the API prefix (leading slash optional). No query/fragment. */
   path: string;
   query?: QueryParams;
   body?: unknown;
@@ -77,7 +79,12 @@ const REQUEST_ID_HEADERS = ['x-request-id', 'x-correlation-id', 'request-id', 'x
 const MAX_ERROR_MESSAGE_LENGTH = 500;
 
 export class HttpClient {
-  constructor(private readonly deps: HttpClientDeps) {}
+  /** Runtime-private so transport dependencies (incl. auth state) resist accidental inspection. */
+  readonly #deps: HttpClientDeps;
+
+  constructor(deps: HttpClientDeps) {
+    this.#deps = deps;
+  }
 
   /** Executes a request and returns the unwrapped body (`json`/`text`/`binary`/`undefined`). */
   async request<T>(spec: RequestSpec): Promise<T> {
@@ -90,14 +97,26 @@ export class HttpClient {
     return this.execute(spec);
   }
 
+  /** Safe JSON representation — never exposes transport dependencies or auth state. */
+  toJSON(): Record<string, unknown> {
+    return { name: 'HttpClient', baseUrl: this.#deps.baseUrl };
+  }
+
+  /** Node's `util.inspect` hook (well-known symbol; no `node:util` import needed). */
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
+  }
+
   private async execute(spec: RequestSpec): Promise<ParsedResponse> {
     const method = spec.method;
     const needsAuth = spec.auth !== false;
     const expect: Expect = spec.expect ?? 'json';
-    const timeoutMs = spec.timeoutMs ?? this.deps.timeoutMs;
-    const fullUrl = joinPath(this.deps.baseUrl, API_PREFIX, spec.path) + buildQuery(spec.query);
-    const path = joinPath('', API_PREFIX, spec.path);
-    const policy = this.deps.retryPolicy;
+    const timeoutMs = spec.timeoutMs ?? this.#deps.timeoutMs;
+    const fullUrl = joinPath(this.#deps.baseUrl, API_PREFIX, spec.path) + buildQuery(spec.query);
+    // Metadata path is always stripped of any query/fragment, even if an internal spec.path
+    // erroneously contained one — belt-and-suspenders against query-string leakage.
+    const path = sanitizePathForMetadata(joinPath('', API_PREFIX, spec.path));
+    const policy = this.#deps.retryPolicy;
 
     let attempt = 0;
     let triedReauth = false;
@@ -121,7 +140,7 @@ export class HttpClient {
       const startedAt = Date.now();
 
       await runRequestHook(
-        this.deps.hooks,
+        this.#deps.hooks,
         this.buildRequestInfo(method, fullUrl, path, headers, spec.body, attempt)
       );
 
@@ -131,7 +150,7 @@ export class HttpClient {
         if (spec.body !== undefined) {
           init.body = JSON.stringify(spec.body);
         }
-        const res = await this.deps.fetch(fullUrl, init);
+        const res = await this.#deps.fetch(fullUrl, init);
         parsed = await parseResponse(res, expect);
       } catch (error) {
         clearTimeout(timeoutId);
@@ -159,7 +178,7 @@ export class HttpClient {
       const durationMs = Date.now() - startedAt;
       const requestId = extractRequestId(parsed.headers);
       await runResponseHook(
-        this.deps.hooks,
+        this.#deps.hooks,
         this.buildResponseInfo(method, path, parsed, durationMs, attempt, requestId)
       );
 
@@ -172,11 +191,11 @@ export class HttpClient {
         parsed.status === 401 &&
         needsAuth &&
         !triedReauth &&
-        this.deps.autoReauth &&
-        this.deps.tokenManager.ownsToken()
+        this.#deps.autoReauth &&
+        this.#deps.tokenManager.ownsToken()
       ) {
         triedReauth = true;
-        this.deps.tokenManager.invalidate(token);
+        this.#deps.tokenManager.invalidate(token);
         continue;
       }
 
@@ -199,19 +218,27 @@ export class HttpClient {
 
   private async acquireToken(): Promise<string> {
     try {
-      return await this.deps.tokenManager.getToken();
+      return await this.#deps.tokenManager.getToken();
     } catch (error) {
       if (error instanceof ICarryAuthenticationError) {
         throw error;
       }
       const message =
         error instanceof ICarryError
-          ? error.message
+          ? redactString(error.message)
           : 'Failed to acquire an iCarry authentication token';
-      throw new ICarryAuthenticationError(message, { cause: error });
+      throw new ICarryAuthenticationError(message, { cause: sanitizeErrorCause(error) });
     }
   }
 
+  /**
+   * Builds request headers with case-insensitive de-duplication (exactly one effective value
+   * per header name). Precedence, lowest to highest: SDK defaults (`Accept`, `User-Agent`,
+   * overridable) → client `defaultHeaders` → per-call headers → SDK-controlled `Content-Type`
+   * (for JSON bodies) and `Authorization` (when auth is enabled). SDK-controlled headers win
+   * last, so a caller cannot override the bearer token or create a second `Authorization`.
+   * Never mutates the caller's header objects.
+   */
   private buildHeaders(
     spec: RequestSpec,
     token: string | undefined,
@@ -222,19 +249,36 @@ export class HttpClient {
       expect === 'binary' || expect === 'auto'
         ? 'application/pdf, application/json;q=0.9, */*;q=0.1'
         : 'application/json';
-    const headers: Record<string, string> = { Accept: accept };
-    Object.assign(headers, this.deps.defaultHeaders);
-    headers['User-Agent'] = this.deps.userAgent;
-    if (hasBody) {
-      headers['Content-Type'] = 'application/json';
+
+    // lowercase name -> [display name, value]
+    const map = new Map<string, [string, string]>();
+    const put = (name: string, value: string): void => {
+      map.set(name.toLowerCase(), [name, value]);
+    };
+
+    put('Accept', accept);
+    put('User-Agent', this.#deps.userAgent);
+    for (const [name, value] of Object.entries(this.#deps.defaultHeaders)) {
+      put(name, value);
     }
     if (spec.headers) {
-      Object.assign(headers, spec.headers);
+      for (const [name, value] of Object.entries(spec.headers)) {
+        put(name, value);
+      }
+    }
+    // SDK-controlled, highest precedence:
+    if (hasBody) {
+      put('Content-Type', 'application/json');
     }
     if (token !== undefined) {
-      headers['Authorization'] = `Bearer ${token}`;
+      put('Authorization', `Bearer ${token}`);
     }
-    return headers;
+
+    const out: Record<string, string> = {};
+    for (const [displayName, value] of map.values()) {
+      out[displayName] = value;
+    }
+    return out;
   }
 
   private buildRequestInfo(
@@ -245,7 +289,7 @@ export class HttpClient {
     body: unknown,
     attempt: number
   ): Readonly<SafeRequestInfo> {
-    const opts = { redactEmail: this.deps.redactEmail };
+    const opts = { redactEmail: this.#deps.redactEmail };
     const info: SafeRequestInfo = {
       method,
       url: redactUrl(fullUrl),
@@ -256,7 +300,7 @@ export class HttpClient {
     if (body !== undefined) {
       info.body = redact(body, opts);
     }
-    return Object.freeze(info);
+    return deepFreeze(info);
   }
 
   private buildResponseInfo(
@@ -278,7 +322,7 @@ export class HttpClient {
     if (requestId !== undefined) {
       info.requestId = requestId;
     }
-    return Object.freeze(info);
+    return deepFreeze(info);
   }
 
   private mapTransportError(
@@ -292,16 +336,20 @@ export class HttpClient {
     if (name === 'AbortError') {
       if (timedOut) {
         return new ICarryTimeoutError(`Request timed out after ${timeoutMs}ms`, {
-          cause: error,
+          cause: sanitizeErrorCause(error),
         });
       }
       if (signal?.aborted === true) {
-        return new ICarryAbortError('Request was aborted by the caller', { cause: error });
+        return new ICarryAbortError('Request was aborted by the caller', {
+          cause: sanitizeErrorCause(error),
+        });
       }
-      return new ICarryAbortError('Request was aborted', { cause: error });
+      return new ICarryAbortError('Request was aborted', { cause: sanitizeErrorCause(error) });
     }
-    const detail = error instanceof Error ? error.message : 'unknown network failure';
-    return new ICarryNetworkError(`Network request failed: ${detail}`, { cause: error });
+    const detail = error instanceof Error ? redactString(error.message) : 'unknown network failure';
+    return new ICarryNetworkError(`Network request failed: ${detail}`, {
+      cause: sanitizeErrorCause(error),
+    });
   }
 
   private buildResponseError(
@@ -311,22 +359,26 @@ export class HttpClient {
     requestId: string | undefined
   ): ICarryError {
     const { message, code, body } = interpretErrorBody(parsed);
+    const safeMessage = redactString(message);
     const details: ICarryApiErrorDetails = { status: parsed.status, method, path };
     if (code !== undefined) {
-      details.code = code;
+      details.code = redactString(code);
     }
     if (requestId !== undefined) {
       details.requestId = requestId;
     }
     if (body !== undefined) {
-      details.details = redact(body, { redactEmail: this.deps.redactEmail });
+      details.details =
+        typeof body === 'string'
+          ? redactString(body)
+          : redact(body, { redactEmail: this.#deps.redactEmail, sanitizeStrings: true });
     }
     // A 401 that reached this point could not be recovered (unowned or already retried);
     // surface it as an authentication error for ergonomic `instanceof` narrowing.
     if (parsed.status === 401) {
-      return new ICarryAuthenticationError(message, { details });
+      return new ICarryAuthenticationError(safeMessage, { details });
     }
-    return new ICarryApiError(message, { details });
+    return new ICarryApiError(safeMessage, { details });
   }
 
   private async emitRetry(
@@ -341,7 +393,7 @@ export class HttpClient {
     if (status !== undefined) {
       event.status = status;
     }
-    await runRetryHook(this.deps.hooks, Object.freeze(event));
+    await runRetryHook(this.#deps.hooks, deepFreeze(event));
   }
 }
 
@@ -374,7 +426,7 @@ function truncate(value: string): string {
     : value;
 }
 
-/** Extracts a safe message/code from a non-2xx body (ProblemDetails object or plain string). */
+/** Extracts a (not-yet-sanitized) message/code from a non-2xx body (ProblemDetails or string). */
 function interpretErrorBody(parsed: ParsedResponse): {
   message: string;
   code?: string;

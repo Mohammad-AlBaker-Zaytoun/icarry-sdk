@@ -9,8 +9,10 @@
  */
 
 import { normalizeConfig, type ICarryClientOptions } from './config';
+import { ICarryValidationError } from './errors';
 import { HttpClient, type RequestSpec } from './transport/http-client';
 import { TokenManager } from './transport/token-manager';
+import { validateRelativePath } from './transport/url';
 import { AuthResource } from './resources/auth';
 import { WarehousesResource } from './resources/warehouses';
 import { CountriesResource } from './resources/countries';
@@ -25,7 +27,10 @@ import type { Expect } from './transport/response-parser';
 /** Options for {@link ICarryClient.request}, the low-level escape hatch. */
 export interface LowLevelRequest {
   method: 'GET' | 'POST';
-  /** Path relative to the API prefix (leading slash optional). */
+  /**
+   * Path relative to the API prefix (leading slash optional). Must not contain a query
+   * string, fragment, absolute URL, or control characters — use `query` for parameters.
+   */
   path: string;
   query?: QueryParams;
   body?: unknown;
@@ -75,12 +80,13 @@ export class ICarryClient {
   /** Shipment tracking, cancellation, and packaging slips. */
   readonly shipments: ShipmentsResource;
 
-  private readonly http: HttpClient;
-  private readonly baseUrl: string;
+  /** Runtime-private: the transport (which holds auth state) never appears via inspection. */
+  readonly #http: HttpClient;
+  readonly #baseUrl: string;
 
   constructor(options: ICarryClientOptions) {
     const config = normalizeConfig(options);
-    this.baseUrl = config.baseUrl;
+    this.#baseUrl = config.baseUrl;
 
     const tokenManager = new TokenManager({
       // Lazy: resolved on first protected call, after `this.auth` is assigned below.
@@ -101,7 +107,7 @@ export class ICarryClient {
       autoReauth: config.autoReauth,
       redactEmail: config.redactEmail,
     });
-    this.http = http;
+    this.#http = http;
 
     this.auth = new AuthResource(http, tokenManager, config.auth);
     this.warehouses = new WarehousesResource(http);
@@ -115,7 +121,22 @@ export class ICarryClient {
 
   /** The resolved base URL. */
   getBaseUrl(): string {
-    return this.baseUrl;
+    return this.#baseUrl;
+  }
+
+  /** Safe representation — never exposes credentials, tokens, or transport internals. */
+  toJSON(): Record<string, unknown> {
+    return { name: 'ICarryClient', baseUrl: this.#baseUrl };
+  }
+
+  /** Safe, non-sensitive string form. */
+  toString(): string {
+    return `ICarryClient(${this.#baseUrl})`;
+  }
+
+  /** Node's `util.inspect` hook (well-known symbol; no `node:util` import needed). */
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**
@@ -123,9 +144,18 @@ export class ICarryClient {
    * timeout/abort, redaction, parsing, retry, and error handling. Prefer the typed resource
    * methods where they exist.
    *
+   * The `path` must be relative to the API base and must **not** contain a query string or
+   * fragment — pass query parameters via the `query` option so they can be redacted from
+   * error/hook metadata. Query strings baked into `path` are rejected before any request runs.
+   *
    * @typeParam T - Expected response shape (unwrapped body).
+   * @throws {@link ICarryValidationError} if `path` is not a safe relative path.
    */
-  request<T>(req: LowLevelRequest): Promise<T> {
+  async request<T>(req: LowLevelRequest): Promise<T> {
+    const validation = validateRelativePath(req.path);
+    if (!validation.ok) {
+      throw new ICarryValidationError(validation.reason ?? 'Invalid path.', 'path');
+    }
     const spec: RequestSpec = { method: req.method, path: req.path };
     if (req.query !== undefined) spec.query = req.query;
     if (req.body !== undefined) spec.body = req.body;
@@ -135,6 +165,6 @@ export class ICarryClient {
     if (req.signal !== undefined) spec.signal = req.signal;
     if (req.timeoutMs !== undefined) spec.timeoutMs = req.timeoutMs;
     if (req.headers !== undefined) spec.headers = req.headers;
-    return this.http.request<T>(spec);
+    return this.#http.request<T>(spec);
   }
 }

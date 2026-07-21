@@ -11,8 +11,11 @@ jobs:
     name: Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18, 20]
+        # 18 = declared minimum (engines >=18), retained for backward-compat testing even
+        # though it is past upstream maintenance. 20 and 22 are maintained LTS lines.
+        node-version: [18, 20, 22]
     steps:
       - uses: actions/checkout@v5
 
@@ -42,6 +45,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Consumer import smoke test (ESM + CJS)
+        run: npm run smoke
 
       - name: Validate package tarball
         run: npm pack --dry-run

@@ -10,6 +10,7 @@
  */
 
 import { ICarryResponseParseError } from '../errors';
+import { redactString } from './redaction';
 
 /** Desired parse strategy for a request. `'auto'` decides from the response `Content-Type`. */
 export type Expect = 'json' | 'text' | 'binary' | 'empty' | 'auto';
@@ -43,9 +44,11 @@ function isBinaryType(contentType: string): boolean {
  *
  * - `204`/`205` and empty bodies → `{ kind: 'empty' }`.
  * - Binary content types → `{ kind: 'binary' }` (never decoded as text).
- * - JSON that fails to parse on a **2xx** response → throws {@link ICarryResponseParseError}.
- * - JSON that fails to parse on a **non-2xx** response → falls back to `{ kind: 'text' }` so
- *   the caller can still surface the raw (often plain-string) error body.
+ * - `'auto'` decides from `Content-Type` (binary → binary, `text/*` → text, otherwise JSON),
+ *   and, for a missing/misleading content type, reads text then attempts JSON, **falling back
+ *   to text** if parsing fails — it never throws a parse error for a successful body.
+ * - Only strict `expect: 'json'` throws {@link ICarryResponseParseError} when a **2xx**
+ *   response body is not valid JSON. Non-2xx unparseable bodies always fall back to text.
  */
 export async function parseResponse(res: Response, expect: Expect): Promise<ParsedResponse> {
   const status = res.status;
@@ -99,14 +102,15 @@ export async function parseResponse(res: Response, expect: Expect): Promise<Pars
     const json: unknown = JSON.parse(text);
     return { kind: 'json', status, ok, headers, json };
   } catch {
-    if (ok) {
+    // Only a caller that explicitly demanded JSON treats an unparseable 2xx as an error.
+    // `'auto'` (and any non-2xx) gracefully falls back to text.
+    if (ok && expect === 'json') {
       throw new ICarryResponseParseError(
         `Failed to parse a successful (${status}) response as JSON (content-type: ${
-          contentType || 'unknown'
+          redactString(contentType) || 'unknown'
         }).`
       );
     }
-    // Non-2xx with an unparseable body (e.g. a bare error string) — preserve it as text.
     return { kind: 'text', status, ok, headers, text };
   }
 }

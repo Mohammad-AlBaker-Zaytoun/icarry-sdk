@@ -30,15 +30,25 @@ export interface TokenManagerOptions {
 }
 
 export class TokenManager {
-  private token: string | undefined;
-  private inFlight: Promise<string> | undefined;
-  private readonly acquireFn: () => Promise<string>;
-  private readonly canReacquire: boolean;
+  #token: string | undefined;
+  #inFlight: Promise<string> | undefined;
+  readonly #acquireFn: () => Promise<string>;
+  readonly #canReacquire: boolean;
 
   constructor(options: TokenManagerOptions) {
-    this.acquireFn = options.acquire;
-    this.canReacquire = options.canReacquire;
-    this.token = options.initialToken;
+    this.#acquireFn = options.acquire;
+    this.#canReacquire = options.canReacquire;
+    this.#token = options.initialToken;
+  }
+
+  /** Safe representation — never exposes the token or acquisition function. */
+  toJSON(): Record<string, unknown> {
+    return { name: 'TokenManager', canReacquire: this.#canReacquire };
+  }
+
+  /** Node's `util.inspect` hook (well-known symbol; no `node:util` import needed). */
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**
@@ -46,23 +56,23 @@ export class TokenManager {
    * in-flight acquisition, so a burst of parallel requests triggers exactly one login.
    */
   getToken(): Promise<string> {
-    if (this.token !== undefined) {
-      return Promise.resolve(this.token);
+    if (this.#token !== undefined) {
+      return Promise.resolve(this.#token);
     }
-    if (this.inFlight !== undefined) {
-      return this.inFlight;
+    if (this.#inFlight !== undefined) {
+      return this.#inFlight;
     }
-    const pending = this.acquireFn().then((token) => {
-      this.token = token;
+    const pending = this.#acquireFn().then((token) => {
+      this.#token = token;
       return token;
     });
-    this.inFlight = pending;
+    this.#inFlight = pending;
     // Clear the in-flight slot once settled (success or failure) so a later call can retry.
     void pending
       .catch(() => undefined)
       .finally(() => {
-        if (this.inFlight === pending) {
-          this.inFlight = undefined;
+        if (this.#inFlight === pending) {
+          this.#inFlight = undefined;
         }
       });
     return pending;
@@ -70,22 +80,22 @@ export class TokenManager {
 
   /** Overwrites the cached token with a caller-supplied value. */
   setToken(token: string): void {
-    this.token = token;
+    this.#token = token;
   }
 
   /** Clears the cached token (next protected call re-acquires if able). */
   clearToken(): void {
-    this.token = undefined;
+    this.#token = undefined;
   }
 
   /** Whether the SDK can obtain a fresh token on its own (credentials/provider modes). */
   ownsToken(): boolean {
-    return this.canReacquire;
+    return this.#canReacquire;
   }
 
   /** The currently cached token, if any (used by the transport to detect a stale 401). */
   peek(): string | undefined {
-    return this.token;
+    return this.#token;
   }
 
   /**
@@ -94,12 +104,12 @@ export class TokenManager {
    * `401` from clobbering a token another concurrent request has already refreshed.
    */
   invalidate(staleToken?: string): void {
-    if (!this.canReacquire) {
+    if (!this.#canReacquire) {
       return;
     }
-    if (staleToken !== undefined && this.token !== staleToken) {
+    if (staleToken !== undefined && this.#token !== staleToken) {
       return;
     }
-    this.token = undefined;
+    this.#token = undefined;
   }
 }

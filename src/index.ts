@@ -45,6 +45,8 @@ export type {
   SafeResponseInfo,
   RetryEvent,
   ICarryHooks,
+  SafeHookError,
+  HookPhase,
 } from './types';
 export type { FetchLike } from './transport/http-client';
 

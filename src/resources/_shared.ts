@@ -13,7 +13,6 @@ import type {
   Dimensions,
   DimensionsWithUnit,
   GeoPoint,
-  NumericInput,
   ParcelDimensions,
   RequestOptions,
 } from '../types';
@@ -88,7 +87,7 @@ export function toWireGeo(prefix: 'From' | 'To', geo: GeoPoint): Record<string, 
 // Lightweight validators — catch obvious caller mistakes, not server rules.
 // ---------------------------------------------------------------------------
 
-function toFinite(value: NumericInput): number | null {
+function toFinite(value: unknown): number | null {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -99,26 +98,62 @@ export function requireNonEmptyString(value: unknown, field: string): void {
   }
 }
 
+/**
+ * Requires a positive integer id: a positive finite integer, or a string of digits that
+ * parses to a positive integer. Rejects empty, zero, negative, decimal, `NaN`, `Infinity`,
+ * and non-numeric strings. (iCarry's documented ids are integers; endpoints that use a
+ * different id form must validate separately.)
+ */
 export function requirePositiveId(value: unknown, field: string): void {
-  if (typeof value === 'string') {
-    if (value.trim() === '') {
-      throw new ICarryValidationError(`${field} must be provided.`, field);
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && value > 0) {
+      return;
     }
-    return;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^[0-9]+$/.test(trimmed) && Number(trimmed) > 0) {
+      return;
+    }
   }
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new ICarryValidationError(`${field} must be a positive id.`, field);
+  throw new ICarryValidationError(`${field} must be a positive integer id.`, field);
+}
+
+/** Requires a positive integer (rejects 0, negatives, decimals, NaN, Infinity, non-numbers). */
+export function requirePositiveInteger(value: unknown, field: string): void {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new ICarryValidationError(`${field} must be a positive integer.`, field);
   }
 }
 
-export function requirePositiveMeasure(value: NumericInput, field: string): void {
+/**
+ * Requires an absolute HTTPS URL (or `http://localhost` / `http://127.0.0.1` for local test
+ * environments). Used for optional payment redirect URLs.
+ */
+export function requireAbsoluteHttpsUrl(value: string, field: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ICarryValidationError(`${field} must be a valid absolute URL.`, field);
+  }
+  const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol === 'https:' || (url.protocol === 'http:' && isLocal)) {
+    return;
+  }
+  throw new ICarryValidationError(
+    `${field} must be an absolute HTTPS URL (http is allowed only for localhost).`,
+    field
+  );
+}
+
+export function requirePositiveMeasure(value: unknown, field: string): void {
   const n = toFinite(value);
   if (n === null || n <= 0) {
     throw new ICarryValidationError(`${field} must be a positive number.`, field);
   }
 }
 
-export function requireNonNegativeMoney(value: NumericInput, field: string): void {
+export function requireNonNegativeMoney(value: unknown, field: string): void {
   const n = toFinite(value);
   if (n === null || n < 0) {
     throw new ICarryValidationError(`${field} must be a non-negative amount.`, field);
@@ -157,12 +192,7 @@ export function validateParcels(parcels: ParcelDimensions[], field: string): voi
     throw new ICarryValidationError(`${field} must contain at least one parcel.`, field);
   }
   parcels.forEach((parcel, index) => {
-    if (!Number.isFinite(parcel.quantity) || parcel.quantity <= 0) {
-      throw new ICarryValidationError(
-        `${field}[${index}].quantity must be a positive number.`,
-        `${field}[${index}].quantity`
-      );
-    }
+    requirePositiveInteger(parcel.quantity, `${field}[${index}].quantity`);
     requirePositiveMeasure(parcel.weight, `${field}[${index}].weight`);
     requirePositiveMeasure(parcel.length, `${field}[${index}].length`);
     requirePositiveMeasure(parcel.width, `${field}[${index}].width`);

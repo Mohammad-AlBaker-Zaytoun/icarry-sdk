@@ -20,7 +20,12 @@ import { ENDPOINTS } from '../constants';
 import { encodePathParam } from '../transport/url';
 import { ICarryValidationError } from '../errors';
 import type { ExtensibleResponse, RequestOptions } from '../types';
-import { requireNonEmptyString, requirePositiveId, toRequestFields } from './_shared';
+import {
+  requireNonEmptyString,
+  requirePositiveId,
+  requireAbsoluteHttpsUrl,
+  toRequestFields,
+} from './_shared';
 
 /** Card details for {@link PaymentsResource.createShipmentOrder}. Never persisted by the SDK. */
 export interface PaymentCardInput {
@@ -72,6 +77,7 @@ function validateCard(card: PaymentCardInput): void {
   }
   requireNonEmptyString(card.cardNumber, 'card.cardNumber');
   requireNonEmptyString(card.cardCvv, 'card.cardCvv');
+  requireNonEmptyString(card.cardType, 'card.cardType');
   requireNonEmptyString(card.cardName, 'card.cardName');
   const month = Number(card.cardExpirationMonth);
   if (!Number.isInteger(month) || month < 1 || month > 12) {
@@ -80,9 +86,10 @@ function validateCard(card: PaymentCardInput): void {
       'card.cardExpirationMonth'
     );
   }
-  if (String(card.cardExpirationYear).trim() === '') {
+  // A non-empty numeric year (2- or 4-digit, e.g. "39" or "2039"). Not a compliance check.
+  if (!/^[0-9]{2,4}$/.test(String(card.cardExpirationYear).trim())) {
     throw new ICarryValidationError(
-      'card.cardExpirationYear is required.',
+      'card.cardExpirationYear must be a numeric year (e.g. 2039 or 39).',
       'card.cardExpirationYear'
     );
   }
@@ -108,8 +115,20 @@ export class PaymentsResource {
   ): Promise<PaymentResult> {
     requirePositiveId(shipmentId, 'shipmentId');
     validateCard(input.card);
+    if (input.paymentMethodSystemName !== undefined) {
+      requireNonEmptyString(input.paymentMethodSystemName, 'paymentMethodSystemName');
+    }
     const card = input.card;
     const redirect = input.redirect ?? {};
+    if (redirect.redirectUrl !== undefined) {
+      requireAbsoluteHttpsUrl(redirect.redirectUrl, 'redirect.redirectUrl');
+    }
+    if (redirect.successUrl !== undefined) {
+      requireAbsoluteHttpsUrl(redirect.successUrl, 'redirect.successUrl');
+    }
+    if (redirect.cancelUrl !== undefined) {
+      requireAbsoluteHttpsUrl(redirect.cancelUrl, 'redirect.cancelUrl');
+    }
     return this.http.request<PaymentResult>({
       method: 'POST',
       path: `${ENDPOINTS.createShipmentOrder}/${encodePathParam(shipmentId)}`,
@@ -125,6 +144,7 @@ export class PaymentsResource {
         cancelUrl: redirect.cancelUrl,
         paymentMethodSystemName: input.paymentMethodSystemName ?? 'Payments.MontyPay',
       },
+      expect: 'auto',
       retryable: false, // payment — never retried
       ...toRequestFields(options),
     });
@@ -149,6 +169,7 @@ export class PaymentsResource {
       method: 'POST',
       path: `${ENDPOINTS.confirmPayment}/${encodePathParam(shipmentId)}`,
       body,
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });
@@ -171,6 +192,7 @@ export class PaymentsResource {
       method: 'POST',
       path: ENDPOINTS.montyPaySuccessReturnUrl,
       query: { orderId: input.orderId, shipmentId: input.shipmentId },
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });
@@ -190,6 +212,7 @@ export class PaymentsResource {
       method: 'POST',
       path: ENDPOINTS.montyPayCancelReturnUrl,
       query: { orderId: input.orderId, shipmentId: input.shipmentId },
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });

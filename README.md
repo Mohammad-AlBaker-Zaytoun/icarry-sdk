@@ -55,7 +55,10 @@ npm install icarry-sdk
 
 ## Runtime requirements
 
-- **Node.js ≥ 18** (uses the global `fetch` and `AbortController`), or any runtime with a WHATWG
+- **Node.js ≥ 18** is the declared minimum (`engines`). Actively tested in CI on Node **18, 20, and
+  22**. Node 18 is retained for backward compatibility even though it is past upstream maintenance;
+  prefer a maintained LTS (20/22) in production. Uses the global `fetch` and `AbortController`, or any
+  runtime with a WHATWG
   `fetch`. You may inject a custom `fetch` via options.
 - Ships both **ESM** and **CommonJS** builds with full TypeScript declarations. Zero runtime dependencies.
 
@@ -260,7 +263,11 @@ if (slip.kind === 'binary') {
 
 ## Error handling
 
-All errors extend `ICarryError` and are safe to log (secrets are redacted). Narrow with `instanceof`:
+All errors extend `ICarryError`. The SDK sanitizes known sensitive values (passwords, bearer
+tokens, card numbers, CVVs, and URLs carrying such data) in error messages, `details`, and the
+error `cause` at its boundaries — including plain-text/JSON API error bodies and network-layer
+messages. The `cause` is a minimal sanitized `Error` (name + redacted message + safe code), never
+the raw thrown object. Narrow with `instanceof`:
 
 ```typescript
 import { ICarryApiError, ICarryAuthenticationError, ICarryTimeoutError } from 'icarry-sdk';
@@ -330,7 +337,13 @@ See [`SECURITY.md`](./SECURITY.md) for the full policy. In short:
 
 - Keep connector `email`/`password` **on the server**. Never ship them to a browser.
 - Never expose bearer tokens in client-side code; don't commit credentials — use env vars or a secret manager.
-- The SDK redacts known secrets from errors/logs/hooks, but it cannot protect data **you** log yourself.
+- The SDK **sanitizes known sensitive values at its own logging and error boundaries** (errors,
+  error causes, and observability hooks). It **cannot** control URL logging at the HTTP/infrastructure
+  layer, cannot protect original input values that **you** log yourself, and a custom `fetch` you
+  inject must not log request URLs.
+- Credentials and tokens are held in runtime-private (`#`) fields, which reduce accidental exposure
+  via `console`/`JSON.stringify`/`util.inspect` — but they do **not** protect against malicious code
+  running in the same process.
 - Use TLS (`https`) endpoints only. Rotate credentials immediately if exposed.
 - The SDK stores no card data and makes **no PCI-compliance claim**.
 
@@ -396,16 +409,20 @@ retry, and error handling. Prefer the typed resource methods where they exist.
 ```typescript
 const data = await icarry.request<MyType>({
   method: 'GET',
-  path: '/SomeFutureEndpoint',
-  query: { foo: 'bar' },
+  path: '/SomeFutureEndpoint', // relative; NO query string or fragment in the path
+  query: { foo: 'bar' }, // put parameters here so they can be redacted from metadata
   retryable: true, // opt in only for safe, idempotent calls
 });
 ```
 
+A `path` containing a query string, fragment, absolute URL, or control character is rejected with
+`ICarryValidationError` before any request runs — always pass parameters via `query`.
+
 ## Observability hooks
 
-Optional, best-effort hooks receive **redacted, frozen** data. A throwing hook never fails a request
-(errors are swallowed and routed to `onHookError` if provided). No telemetry runs by default.
+Optional, best-effort hooks receive **redacted, deep-frozen** data (nested objects included). A
+throwing hook never fails a request — errors are swallowed and routed, **sanitized** (as a
+`SafeHookError`), to `onHookError` if provided. No telemetry runs by default.
 
 ```typescript
 new ICarryClient({

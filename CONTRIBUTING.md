@@ -15,14 +15,13 @@ npm ci
 Run the full quality gate before opening a PR — CI runs the same checks:
 
 ```bash
-npm run format:check   # Prettier
-npm run lint           # ESLint
-npm run typecheck      # tsc --noEmit (strict)
-npm test               # Vitest (mocked fetch, no live credentials)
-npm run test:coverage  # coverage thresholds
-npm run build          # tsup (ESM + CJS + d.ts)
+npm run validate       # format:check + lint + typecheck + check:secrets + test:coverage + build
+npm run smoke          # ESM + CJS consumer import smoke test (after build)
 npm pack --dry-run     # inspect the publishable tarball
 ```
+
+`npm run validate` is also what `prepublishOnly` runs. Individual steps are available too:
+`format:check`, `lint`, `typecheck`, `check:secrets`, `test`, `test:coverage`, `build`.
 
 `npm run format` and `npm run lint:fix` auto-fix formatting/lint issues.
 

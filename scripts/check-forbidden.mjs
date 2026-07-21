@@ -9,7 +9,13 @@ import { join, extname } from 'node:path';
 
 const ROOT = process.cwd();
 const SCAN_DIRS = ['src', 'tests', 'scripts'];
-const SCAN_ROOT_FILES = ['README.md', 'API_COVERAGE.md', 'SECURITY.md', 'CONTRIBUTING.md', 'CHANGELOG.md'];
+const SCAN_ROOT_FILES = [
+  'README.md',
+  'API_COVERAGE.md',
+  'SECURITY.md',
+  'CONTRIBUTING.md',
+  'CHANGELOG.md',
+];
 const SCAN_EXTS = new Set(['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.md', '.yml', '.yaml']);
 
 /** Known real-looking test PANs that must never be committed (incl. iCarry's docs sample). */

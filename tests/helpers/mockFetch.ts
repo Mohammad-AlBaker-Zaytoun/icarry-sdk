@@ -96,6 +96,28 @@ export function sequenceFetch(...responses: Array<Response | (() => Response)>):
   };
 }
 
+/**
+ * Builds a minimal Response-like object with a controllable (or absent) content-type, for
+ * simulating servers that omit or mislabel `Content-Type`. Use via a factory in
+ * `sequenceFetch(() => fakeResponse(...))` since it is not a real (cloneable) `Response`.
+ */
+export function fakeResponse(
+  body: string | null,
+  opts: { status?: number; contentType?: string | null } = {}
+): Response {
+  const status = opts.status ?? 200;
+  const contentType = opts.contentType === undefined ? null : opts.contentType;
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
+    } as unknown as Headers,
+    text: async () => body ?? '',
+    arrayBuffer: async () => new TextEncoder().encode(body ?? '').buffer,
+  } as unknown as Response;
+}
+
 /** A fetch that never resolves until its signal aborts, then rejects with an AbortError. */
 export function hangingFetch(): FetchLike {
   return (_url: string, init: RequestInit) =>

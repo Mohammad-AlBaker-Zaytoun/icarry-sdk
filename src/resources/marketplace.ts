@@ -64,6 +64,7 @@ export class MarketplaceResource {
       method: 'POST',
       path: ENDPOINTS.marketplaceEstimateRates,
       body: toWireMarketplaceRate(input),
+      expect: 'auto',
       retryable: options.retry === true,
       ...toRequestFields(options),
     });
@@ -80,6 +81,7 @@ export class MarketplaceResource {
       method: 'POST',
       path: ENDPOINTS.marketplaceCreateOrder,
       body: toWireMarketplaceCreateOrder(input),
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });

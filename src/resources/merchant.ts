@@ -29,6 +29,7 @@ import {
   toRequestFields,
   requireNonEmptyString,
   requirePositiveMeasure,
+  requirePositiveInteger,
   requireNonNegativeMoney,
   validateDimensions,
   validateGeoPoint,
@@ -208,6 +209,9 @@ export function validateMerchantCreateOrder(input: MerchantCreateOrderInput): vo
   requireNonEmptyString(input.provider, 'provider');
   requireNonEmptyString(String(input.methodId ?? ''), 'methodId');
   requirePositiveMeasure(input.price, 'price');
+  requirePositiveInteger(input.parcel?.quantity, 'parcel.quantity');
+  requireNonNegativeMoney(input.parcel?.packageValue, 'parcel.packageValue');
+  requireNonEmptyString(input.parcel?.packageCurrency, 'parcel.packageCurrency');
   if (input.cod) {
     requireNonNegativeMoney(input.cod.amount, 'cod.amount');
     requireNonEmptyString(input.cod.currency, 'cod.currency');
@@ -230,6 +234,7 @@ export class MerchantResource {
       method: 'POST',
       path: ENDPOINTS.merchantEstimateRates,
       body: toWireMerchantRate(input),
+      expect: 'auto',
       retryable: options.retry === true,
       ...toRequestFields(options),
     });
@@ -245,6 +250,7 @@ export class MerchantResource {
       method: 'POST',
       path: ENDPOINTS.merchantCreateOrder,
       body: toWireMerchantCreateOrder(input),
+      expect: 'auto',
       retryable: false,
       ...toRequestFields(options),
     });

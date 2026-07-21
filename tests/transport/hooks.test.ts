@@ -43,21 +43,36 @@ describe('hooks', () => {
     await expect(runRequestHook({}, reqInfo)).resolves.toBeUndefined();
   });
 
-  it('swallows a throwing hook and routes it to onHookError', async () => {
-    const boom = new Error('hook exploded');
-    const onHookError = vi.fn();
+  it('swallows a throwing hook and routes a SANITIZED error to onHookError', async () => {
+    const boom = new Error(
+      'hook exploded at https://host/CreateShipmentOrder/7?cardNumber=1111222233334444&cardCVV=123 Bearer abc.def'
+    );
+    (boom as { code?: string }).code = 'HOOK_FAIL';
+    let received: unknown;
     await expect(
       runRequestHook(
         {
           onRequest: () => {
             throw boom;
           },
-          onHookError,
+          onHookError: (err, phase) => {
+            received = { err, phase };
+          },
         },
         reqInfo
       )
     ).resolves.toBeUndefined();
-    expect(onHookError).toHaveBeenCalledWith(boom, 'request');
+    const { err, phase } = received as { err: Record<string, unknown>; phase: string };
+    expect(phase).toBe('request');
+    // It must be a plain SafeHookError, not the original Error instance.
+    expect(err).not.toBe(boom);
+    expect(err.name).toBe('Error');
+    expect(err.code).toBe('HOOK_FAIL');
+    const serialized = JSON.stringify(err);
+    expect(serialized).not.toContain('1111222233334444');
+    expect(serialized).not.toContain('cardCVV=123');
+    expect(serialized).not.toContain('Bearer abc.def');
+    expect(serialized).toContain('[REDACTED]');
   });
 
   it('swallows a throwing onHookError too', async () => {

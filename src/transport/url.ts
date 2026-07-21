@@ -1,5 +1,6 @@
 /**
- * URL construction helpers: base-URL normalization, path-parameter encoding, and joining.
+ * URL construction helpers: base-URL normalization, path-parameter encoding, and joining,
+ * plus low-level path validation and metadata-safe path sanitization.
  *
  * @packageDocumentation
  */
@@ -39,4 +40,78 @@ export function joinPath(baseUrl: string, apiPrefix: string, path: string): stri
   const withPrefix = base.toLowerCase().endsWith(prefix.toLowerCase()) ? base : `${base}${prefix}`;
   const suffix = path.startsWith('/') ? path : `/${path}`;
   return `${withPrefix}${suffix}`;
+}
+
+/** Whether a string contains any ASCII control character (0x00-0x1F or 0x7F). */
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Returns `value` with any ASCII control characters removed. */
+function stripControlChars(value: string): string {
+  let out = '';
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code > 0x1f && code !== 0x7f) {
+      out += value[i];
+    }
+  }
+  return out;
+}
+
+/** Result of {@link validateRelativePath}. */
+export interface PathValidation {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Validates that a low-level request path is a safe relative path: a non-empty string with
+ * no query string, no fragment, no absolute URL, and no control characters. Callers must
+ * pass query parameters via the `query` option, not baked into the path.
+ */
+export function validateRelativePath(path: unknown): PathValidation {
+  if (typeof path !== 'string' || path.trim() === '') {
+    return { ok: false, reason: 'path must be a non-empty string.' };
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) || path.startsWith('//')) {
+    return { ok: false, reason: 'path must be relative to the API base, not an absolute URL.' };
+  }
+  if (path.includes('?')) {
+    return {
+      ok: false,
+      reason: 'path must not include a query string; use the query option instead.',
+    };
+  }
+  if (path.includes('#')) {
+    return { ok: false, reason: 'path must not include a fragment.' };
+  }
+  if (hasControlChar(path)) {
+    return { ok: false, reason: 'path must not contain control characters.' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Strips any query string and fragment from a path so it is safe to place in error details
+ * and observability metadata, even if an internal caller violated the path contract. Also
+ * removes control characters defensively.
+ */
+export function sanitizePathForMetadata(path: string): string {
+  let out = path;
+  const hash = out.indexOf('#');
+  if (hash !== -1) {
+    out = out.slice(0, hash);
+  }
+  const query = out.indexOf('?');
+  if (query !== -1) {
+    out = out.slice(0, query);
+  }
+  return stripControlChars(out);
 }

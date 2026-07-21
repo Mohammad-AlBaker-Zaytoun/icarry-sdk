@@ -70,11 +70,26 @@ function validateAuthenticate(req: AuthenticateRequest): void {
 }
 
 export class AuthResource {
-  constructor(
-    private readonly http: HttpClient,
-    private readonly tokenManager: TokenManager,
-    private readonly auth: ResolvedAuth
-  ) {}
+  readonly #http: HttpClient;
+  readonly #tokenManager: TokenManager;
+  /** Runtime-private: holds the connector credentials / token provider, never enumerable. */
+  readonly #auth: ResolvedAuth;
+
+  constructor(http: HttpClient, tokenManager: TokenManager, auth: ResolvedAuth) {
+    this.#http = http;
+    this.#tokenManager = tokenManager;
+    this.#auth = auth;
+  }
+
+  /** Safe representation — never exposes credentials, token, or the token provider. */
+  toJSON(): Record<string, unknown> {
+    return { name: 'AuthResource' };
+  }
+
+  /** Node's `util.inspect` hook (well-known symbol; no `node:util` import needed). */
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
+  }
 
   /**
    * Performs the authentication request and returns the full token response. Uses the
@@ -84,14 +99,14 @@ export class AuthResource {
    * @throws {@link ICarryAuthenticationError} if the API returns no token.
    */
   async authenticate(credentials?: AuthenticateRequest): Promise<AuthTokenResponse> {
-    const creds = credentials ?? this.auth.credentials;
+    const creds = credentials ?? this.#auth.credentials;
     if (!creds) {
       throw new ICarryConfigurationError(
         'No credentials configured. Pass { email, password } to authenticate().'
       );
     }
     validateAuthenticate(creds);
-    const wire = await this.http.request<Record<string, unknown> | undefined>({
+    const wire = await this.#http.request<Record<string, unknown> | undefined>({
       method: 'POST',
       path: ENDPOINTS.authGetToken,
       auth: false,
@@ -109,7 +124,7 @@ export class AuthResource {
    * share a single acquisition.
    */
   getToken(): Promise<string> {
-    return this.tokenManager.getToken();
+    return this.#tokenManager.getToken();
   }
 
   /** Sets the cached bearer token explicitly (e.g. restored from a secret store). */
@@ -117,12 +132,12 @@ export class AuthResource {
     if (typeof token !== 'string' || token.trim() === '') {
       throw new ICarryValidationError('token must be a non-empty string.', 'token');
     }
-    this.tokenManager.setToken(token);
+    this.#tokenManager.setToken(token);
   }
 
   /** Clears the cached bearer token. */
   clearToken(): void {
-    this.tokenManager.clearToken();
+    this.#tokenManager.clearToken();
   }
 
   /**
@@ -131,11 +146,11 @@ export class AuthResource {
    * token manager).
    */
   async acquireToken(): Promise<string> {
-    switch (this.auth.mode) {
+    switch (this.#auth.mode) {
       case 'credentials':
         return (await this.authenticate()).token;
       case 'provider': {
-        const provider = this.auth.tokenProvider;
+        const provider = this.#auth.tokenProvider;
         if (!provider) {
           throw new ICarryConfigurationError('tokenProvider mode selected but no provider set.');
         }
