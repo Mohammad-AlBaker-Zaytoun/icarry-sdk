@@ -6,6 +6,73 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.6] - Release workflow and live-summary privacy
+
+A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
+retry policy, authentication modes, ESM + CommonJS runtime output, TypeScript declarations
+(`dist/index.d.ts` for ESM, `dist/index.d.cts` for CommonJS), conditional exports, and zero runtime
+dependencies are preserved. No public API or runtime-behavior change.
+
+### Fixed
+
+- **Live shape summaries no longer expose arbitrary identifier keys.** `sanitizeShapeKey` now shows
+  a key verbatim **only** when it is on a small explicit allowlist; every other property key —
+  including arbitrary identifiers such as `CustomerABC123` or `MohammadZaytoun` — becomes a
+  structural category (`[dynamic-key]`, etc.). The permissive "any identifier is safe" passthrough
+  (`SAFE_SCHEMA_KEY_RE`) was removed.
+
+### Security
+
+- **Raw-property processing cap.** `summarizeShape` iterates own enumerable keys incrementally
+  (never `Object.entries`) and caps raw properties processed (`MAX_RAW_KEYS`) independently of the
+  distinct-category cap (`MAX_CATEGORIES`), so an object with, e.g., 100k keys that all collapse to
+  one category is bounded and flagged `truncated`. Object size is derived from a bounded counter (no
+  full materialization) and remains a coarse bucket. Collision aggregation
+  (`keys: Record<string, kind[]>`) is unchanged.
+
+### Release
+
+- The manual release workflow gained an explicit `publish_mode` input — **`validate-only`**,
+  **`trusted`**, and **`token`**:
+  - `validate-only` runs the full gate + version checks and publishes nothing.
+  - `trusted` publishes via npm OIDC **trusted publishing with no `NPM_TOKEN`** (`npm publish
+    --access public`), relying on `id-token: write`. This requires npm-side trusted-publisher
+    configuration for this exact repository + workflow, which the workflow cannot itself assert.
+  - `token` requires a non-empty `NPM_TOKEN` and **fails clearly** if it is missing (no silent
+    downgrade), publishing with `--provenance`.
+
+### CI
+
+- **GitHub secrets are no longer referenced inside `if:` conditions.** `NPM_TOKEN` is mapped once to
+  a job-level `env`, and conditions use `env.NPM_TOKEN`. The token is never echoed or placed in
+  commands/artifacts/summaries.
+- The workflow now releases an **exact Git tag only** (`git_tag`, e.g. `v0.1.6`) — not an arbitrary
+  commit — and verifies input tag == `v<package.json version>` == the tag on the checked-out HEAD ==
+  `SDK_VERSION`, that the tag resolves to HEAD, and that the version does not already exist on npm.
+  Free-text inputs are passed through `env` (never interpolated into shell). Added release
+  `concurrency` (no cancel-in-progress) and kept minimal permissions (`contents: read`,
+  `id-token: write`).
+
+### Validation
+
+- No change to `validate`/`validate:release`/`release:check`/`release:publish`. `check:package`
+  still verifies export-map paths, both declarations, `SDK_VERSION`, and `.d.ts`/`.d.cts` parity.
+
+### Tests
+
+- Rewrote shape-summary tests for allowlist-only visibility, arbitrary-identifier masking, and the
+  raw-property cap (10k single-category stress). Added a static release-workflow guard
+  (`tests/package/release-workflow.test.ts`) asserting the mode set, tag-only input, no `secrets.*`
+  in `if:`, token/trusted behavior, exact tag verification, minimal permissions, and concurrency.
+
+### Documentation
+
+- README/SECURITY corrected: the summarizer shows **only allowlisted keys verbatim; every other key
+  becomes a structural category**. Documented the raw-property and category caps, size bucketing, and
+  that it is a **defense-in-depth helper, not a formal anonymizer** (no PCI/PII-detection guarantee).
+  Trusted publishing is documented as requiring npm-side configuration; no claim is made that it has
+  been performed. No live iCarry response schema has been verified.
+
 ## [0.1.5] - Release and metadata hardening
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
@@ -366,7 +433,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...v0.1.3

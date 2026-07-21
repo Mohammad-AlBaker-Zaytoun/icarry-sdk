@@ -86,14 +86,20 @@ reject CR, LF, NUL, and other control characters, preventing header/response spl
 inspection methods never expose credentials, query strings, or fragments from the configured URL.
 
 The optional, env-gated live-contract tests can summarize provisional response shapes for schema
-work. Those summaries record value kinds, coarse size buckets, and **sanitized** property names
-only — property names are not assumed to be safe schema identifiers. A sensitive-keyword check
-(token/secret/password/authorization/bearer/jwt/apiKey/privateKey/card/pan/cvv/…) runs **before**
-the generic identifier check, so identifier-shaped secrets (e.g. `BearerSecretToken`) are masked as
-`[token-like-key]`; only a small explicit allowlist of common schema keys stays readable, and other
-dynamic keys (emails, phones, ids, URLs, card-like strings) become category labels. Value kinds are
-aggregated per category so colliding keys cannot overwrite each other and no raw key is emitted. No
-values, nested contents, exact sizes, or PII are recorded or logged.
+work. This summarizer is a **defense-in-depth helper for optional live tests, not a formal
+anonymizer**: it makes no PCI-compliance or guaranteed-PII-detection claim and is not a substitute
+for privacy review. Its concrete guarantees:
+
+- **Only keys on a small explicit allowlist may appear verbatim** (`id`, `name`, `status`,
+  `createdAt`, `trackingNumber`, …). **Every other property key is replaced by a structural
+  category.** Arbitrary identifier-shaped keys (customer names, ids, references) and
+  identifier-shaped secrets are NOT shown — they become `[dynamic-key]` / `[token-like-key]`;
+  emails/phones/URLs/UUIDs/card-like keys become their respective category labels.
+- Value kinds are aggregated per category so colliding keys cannot overwrite each other. Raw
+  property processing is capped (own enumerable keys only), independently of the category cap, so a
+  huge object is bounded and flagged `truncated`.
+- Sizes are coarse buckets, never exact counts. No response value, nested content, raw
+  non-allowlisted key, or exact property/category count is recorded or logged.
 
 ## Dependency security
 

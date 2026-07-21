@@ -3,19 +3,19 @@
  * response types against a real iCarry tenant.
  *
  * It records ONLY structural information — value KINDS, a coarse size BUCKET, and *sanitized*
- * object property names — and NEVER any value. Property names are NOT assumed to be safe schema
- * identifiers. A conservative policy is applied to every key:
- *   1. Sensitive-keyword matches (token/secret/password/bearer/jwt/apiKey/privateKey/card/pan/
- *      cvv/…) are masked as `[token-like-key]` EVEN when they are otherwise identifier-shaped
- *      (e.g. `BearerSecretToken`, `apiKeySecretValue`, `SUPERSECRETTOKEN`), unless the key is on a
- *      small explicit safe-schema allowlist.
- *   2. Structural detectors mask emails, URLs, phone/card/long-numeric, UUIDs, and over-long or
- *      control-bearing keys with category labels.
- *   3. Only then are remaining plain identifiers shown as-is.
- * Keys are aggregated per sanitized category as a set of value kinds, so two raw keys that map to
- * the same category (e.g. two emails) cannot overwrite each other's structural kind and no raw key
- * is ever emitted. Sizes are bucketed, never exact. Values, nested contents, ids, addresses,
- * emails, phone numbers, tracking numbers, tokens, card data, and full bodies never appear.
+ * object property categories — and NEVER any value. It is a **defense-in-depth helper for optional
+ * live tests, not a formal anonymizer** and makes no PCI/PII-detection guarantee.
+ *
+ * Key policy (conservative):
+ *   - **Only keys on a small explicit allowlist may appear verbatim.** Every other property key is
+ *     replaced by a structural category (`[email-key]`, `[token-like-key]`, `[dynamic-key]`, …).
+ *     Arbitrary identifier-shaped keys (customer names, ids, references) are therefore NOT shown.
+ *   - Value kinds are aggregated per category, so colliding keys can't overwrite each other's kind.
+ *   - Raw property processing is capped (`MAX_RAW_KEYS`) independently of the distinct-category cap
+ *     (`MAX_CATEGORIES`), iterating own enumerable keys only — so a huge object (e.g. 100k keys that
+ *     all map to one category) is bounded and flagged `truncated`.
+ *   - Sizes are coarse buckets, never exact counts. Values, nested contents, raw non-allowlisted
+ *     keys, and exact property/category counts never appear.
  */
 
 export type ValueKind = 'null' | 'undefined' | 'string' | 'number' | 'boolean' | 'array' | 'object';
@@ -31,18 +31,21 @@ export interface ShapeSummary {
   elements?: ValueKind[];
   /** For objects: sanitized category → the distinct value kinds seen under it (aggregated). */
   keys?: Record<string, ValueKind[]>;
-  /** True when categories/element-kinds were capped, so the summary is partial. */
+  /** True when raw-property, category, or element-kind caps were hit, so the summary is partial. */
   truncated?: boolean;
 }
 
-/** Hard caps so a hostile/huge payload cannot bloat or de-anonymize a summary. */
-const MAX_KEYS = 40;
+/** Hard caps so a hostile/huge payload cannot bloat, slow, or de-anonymize a summary. */
+const MAX_RAW_KEYS = 200; // raw own-properties processed, regardless of how they collapse
+const MAX_CATEGORIES = 40; // distinct sanitized categories retained
 const MAX_KEY_LEN = 40;
 const MAX_ELEMENT_KINDS = 8;
+/** Bounded object-size counter — never counts past the `many` threshold. */
+const SIZE_COUNT_CAP = 11;
 
 /**
- * Small, deliberately conservative allowlist of keys that are safe to show verbatim even if they
- * happened to match a sensitive keyword. Intentionally narrow — expand only with clear need.
+ * Small, deliberately conservative allowlist — the ONLY keys shown verbatim. Everything not here is
+ * categorized. Do NOT add customer names, arbitrary identifiers, or business-specific fields.
  */
 const SAFE_SCHEMA_KEYS = new Set([
   'id',
@@ -71,9 +74,6 @@ const SAFE_SCHEMA_KEYS = new Set([
  */
 const SENSITIVE_KEYWORD_RE =
   /token|secret|passwd|password|authorization|bearer|jwt|api[-_]?key|private[-_]?key|card|pan|cvv|cvc|security[-_]?code|session|cookie|credential/i;
-
-/** A plain JavaScript-style identifier (shown verbatim only after sensitive filtering). */
-const SAFE_SCHEMA_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -104,9 +104,9 @@ function hasControlChar(value: string): boolean {
 }
 
 /**
- * Maps a raw object key to a display-safe category or (for confidently-safe plain identifiers)
- * itself. Sensitive-keyword matching runs BEFORE the generic identifier check so identifier-shaped
- * secrets can never leak.
+ * Maps a raw object key to a display-safe category, or to itself ONLY when it is on the explicit
+ * {@link SAFE_SCHEMA_KEYS} allowlist. Arbitrary identifiers (`CustomerABC123`, `MohammadZaytoun`,
+ * `OrderReferenceXYZ`, …) are categorized as `[dynamic-key]`, never shown verbatim.
  */
 export function sanitizeShapeKey(key: string): string {
   if (typeof key !== 'string' || key.length === 0) return '[dynamic-key]';
@@ -114,27 +114,23 @@ export function sanitizeShapeKey(key: string): string {
   if (key.length > MAX_KEY_LEN) return '[long-key]';
   if (key.includes('@')) return '[email-key]';
   if (key.includes('://')) return '[url-key]';
-
-  // Sensitive keywords are masked before the generic safe-identifier check — unless explicitly
-  // allowlisted — so `BearerSecretToken`, `password123`, `apiKeySecretValue`, etc. are caught.
-  if (SENSITIVE_KEYWORD_RE.test(key) && !SAFE_SCHEMA_KEYS.has(key)) {
-    return '[token-like-key]';
-  }
-
+  if (SENSITIVE_KEYWORD_RE.test(key)) return '[token-like-key]';
   if (UUID_RE.test(key)) return '[long-id-key]';
+
   const digitsOnly = key.replace(/[\s-]/g, '');
   if (/^\d{13,19}$/.test(digitsOnly)) return '[numeric-key]'; // card-number-like
   if (/^\+?\d{7,15}$/.test(digitsOnly)) return '[phone-key]';
   if (/^\d{7,}$/.test(digitsOnly)) return '[numeric-key]'; // long numeric id
 
-  if (SAFE_SCHEMA_KEY_RE.test(key)) return key; // plain identifier, no sensitive fragment
+  if (SAFE_SCHEMA_KEYS.has(key)) return key; // ONLY allowlisted keys are shown verbatim
   return '[dynamic-key]';
 }
 
 /**
  * Returns a value-free, size-bucketed structural summary of `value` (see module docs). Does not
  * recurse into nested objects/arrays — nested contents are reported only as a kind — so circular
- * or deeply nested inputs cannot leak values or cause a stack overflow.
+ * or deeply nested inputs cannot leak values or cause a stack overflow. Object processing is
+ * bounded by {@link MAX_RAW_KEYS} raw own-properties and {@link MAX_CATEGORIES} categories.
  */
 export function summarizeShape(value: unknown): ShapeSummary {
   const kind = kindOf(value);
@@ -149,29 +145,42 @@ export function summarizeShape(value: unknown): ShapeSummary {
   }
 
   if (kind === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>);
-    // Aggregate value kinds per sanitized category so collisions (e.g. two emails) don't overwrite
-    // each other and no raw key or occurrence count is exposed.
+    const object = value as Record<string, unknown>;
+    // Aggregate value kinds per sanitized category. Iterate own enumerable keys incrementally
+    // (never Object.entries) so a huge object is bounded by MAX_RAW_KEYS regardless of how many
+    // distinct categories it collapses into.
     const byCategory = new Map<string, Set<ValueKind>>();
     let truncated = false;
-    for (const [rawKey, val] of entries) {
+    let processed = 0;
+    let observed = 0; // bounded object-size counter (never exceeds SIZE_COUNT_CAP)
+
+    for (const rawKey in object) {
+      if (!Object.prototype.hasOwnProperty.call(object, rawKey)) continue;
+      if (processed >= MAX_RAW_KEYS) {
+        truncated = true;
+        break;
+      }
+      processed += 1;
+      if (observed < SIZE_COUNT_CAP) observed += 1;
+
       const category = sanitizeShapeKey(rawKey);
       let kinds = byCategory.get(category);
       if (!kinds) {
-        if (byCategory.size >= MAX_KEYS) {
+        if (byCategory.size >= MAX_CATEGORIES) {
           truncated = true;
           break;
         }
         kinds = new Set<ValueKind>();
         byCategory.set(category, kinds);
       }
-      kinds.add(kindOf(val));
+      kinds.add(kindOf(object[rawKey]));
     }
+
     const keys: Record<string, ValueKind[]> = {};
     for (const [category, kinds] of byCategory) {
       keys[category] = [...kinds].sort().slice(0, MAX_ELEMENT_KINDS);
     }
-    const summary: ShapeSummary = { kind, size: sizeBucket(entries.length), keys };
+    const summary: ShapeSummary = { kind, size: sizeBucket(observed), keys };
     if (truncated) summary.truncated = true;
     return summary;
   }

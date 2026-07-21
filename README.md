@@ -486,16 +486,21 @@ Every included live check is **read-only** (auth, countries, states, warehouses;
 and packaging-slip checks run only when `ICARRY_TEST_TRACKING_NUMBER` / `ICARRY_TEST_SHIPMENT_ID`
 are supplied). It never runs in CI and never uses real card data. Any future mutating or paid check
 requires a second explicit opt-in (`ICARRY_ALLOW_MUTATIONS=true` / `ICARRY_ALLOW_PAYMENT_TESTS=true`)
-and none ship enabled. The suite can log a privacy-preserving `summarizeShape` of provisional
-responses — value **kinds** plus a coarse size bucket and **sanitized** property names — to help
-tighten the still-unverified response types over time. Property names are **not** assumed to be
-schema identifiers. A sensitive-keyword check runs **before** the generic identifier check, so
-identifier-shaped secrets (`BearerSecretToken`, `apiKeySecretValue`, `SUPERSECRETTOKEN`, …) are
-masked as `[token-like-key]`; only a small, explicit allowlist of common schema keys stays readable,
-and dynamic keys (emails, phones, ids, URLs, card-like strings) become category labels
-(`[email-key]`, `[dynamic-key]`, …). Value kinds are aggregated per category (`Record<string,
-kind[]>`) so colliding keys can't overwrite each other and no raw key, value, nested content, exact
-size, or PII ever appears in a summary.
+and none ship enabled. The suite can log a `summarizeShape` of provisional responses to help tighten
+the still-unverified response types over time. It is a **defense-in-depth helper for optional live
+tests, not a formal anonymizer** — it makes no PCI-compliance or guaranteed-PII-detection claim, and
+does not replace a privacy review. Its guarantees:
+
+- **Only explicitly allowlisted schema keys** (`id`, `name`, `status`, `createdAt`, `trackingNumber`,
+  `warehouseId`, …) may appear verbatim. **Every other property key is replaced by a structural
+  category** — arbitrary identifiers (`CustomerABC123`, `MohammadZaytoun`) and identifier-shaped
+  secrets alike become `[dynamic-key]` / `[token-like-key]`; emails/phones/URLs/UUIDs/card-like keys
+  become `[email-key]`/`[phone-key]`/…
+- Value kinds are aggregated per category (`Record<string, kind[]>`) so colliding keys can't
+  overwrite each other. Raw property processing is capped (own enumerable keys only) independently
+  of the category cap, so a huge object is bounded and flagged `truncated`.
+- Sizes are coarse buckets (`empty`/`one`/`few`/`many`), never exact counts. No response value,
+  nested content, raw non-allowlisted key, or exact property/category count ever appears.
 
 ## Contributing
 

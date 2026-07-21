@@ -20,7 +20,7 @@ describe('isValidHeaderName', () => {
 
 describe('isValidHeaderValue — blocks header/response splitting', () => {
   it('accepts ordinary values and horizontal tabs', () => {
-    expect(isValidHeaderValue('icarry-sdk/0.1.5')).toBe(true);
+    expect(isValidHeaderValue('icarry-sdk/0.1.6')).toBe(true);
     expect(isValidHeaderValue('Bearer abc.def')).toBe(true);
     expect(isValidHeaderValue('a\tb')).toBe(true);
   });

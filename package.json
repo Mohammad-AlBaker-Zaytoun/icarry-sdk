@@ -1,6 +1,6 @@
 {
   "name": "icarry-sdk",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Unofficial iCarry shipping & logistics API client for Node.js — type-safe, secure, zero dependencies",
   "author": "Zaytoun Solutions <info@zaytounsolutions.com>",
   "license": "MIT",

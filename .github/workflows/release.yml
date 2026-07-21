@@ -1,13 +1,19 @@
 name: Release (manual)
 
-# Manual-only. Never runs on push or pull_request, so it cannot fail continuously if npm
-# credentials are not configured. It always runs the full release gate; it only PUBLISHES when an
-# NPM_TOKEN secret (or npm trusted publishing) is available — otherwise the publish step is skipped.
+# Manual-only (workflow_dispatch). Never runs on push or pull_request. Three explicit modes:
+#   validate-only — run the full release gate + version checks, publish nothing.
+#   trusted       — publish via npm OIDC trusted publishing (NO NPM_TOKEN). Requires that npm has
+#                   been configured to trust THIS repository + workflow as a trusted publisher; that
+#                   is npm-side configuration this file cannot assert. Provenance is automatic.
+#   token         — publish with a classic automation token; fails clearly if NPM_TOKEN is missing.
+#
+# The workflow releases only an EXACT existing tag (e.g. v0.1.6), verified against
+# package.json/SDK_VERSION and the checked-out commit before any publish.
 on:
   workflow_dispatch:
     inputs:
-      git_ref:
-        description: Tag or commit to release (e.g. v0.1.5)
+      git_tag:
+        description: Exact Git tag to release, for example v0.1.6
         required: true
         type: string
       npm_tag:
@@ -18,19 +24,62 @@ on:
         options:
           - latest
           - next
+      publish_mode:
+        description: Release operation
+        required: true
+        default: validate-only
+        type: choice
+        options:
+          - validate-only
+          - trusted
+          - token
 
+# Minimal permissions. id-token: write is required for npm provenance / OIDC trusted publishing.
 permissions:
   contents: read
-  id-token: write # required for npm provenance / trusted publishing
+  id-token: write
+
+# Prevent overlapping releases of the same tag. Do not cancel an in-flight publish.
+concurrency:
+  group: npm-release-${{ inputs.git_tag }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Optional: uncomment to require a GitHub "npm" environment (approval rules / protected
+    # secrets). The environment must be created in repo settings first, or this will gate every run.
+    # environment: npm
+    env:
+      # Map the secret to a job-level env var ONCE. GitHub Actions should not reference `secrets.*`
+      # directly inside `if:` conditions; using `env.NPM_TOKEN` keeps conditions and the token
+      # source in one place and avoids leaking the value into expressions/logs.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Inputs are passed through env (never interpolated directly into run scripts) to avoid shell
+      # injection from the free-text tag.
+      RELEASE_TAG: ${{ inputs.git_tag }}
+      NPM_TAG: ${{ inputs.npm_tag }}
+      PUBLISH_MODE: ${{ inputs.publish_mode }}
     steps:
-      - name: Check out the selected tag/commit
+      - name: Validate the release tag format
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Release tag must look like v1.2.3 (got '$RELEASE_TAG')"; exit 1 ;;
+          esac
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Release tag is not a valid semver tag: $RELEASE_TAG"; exit 1
+          fi
+          case "$NPM_TAG" in
+            latest|next) ;;
+            *) echo "::error::npm dist-tag must be 'latest' or 'next' (got '$NPM_TAG')"; exit 1 ;;
+          esac
+
+      - name: Check out the exact tag
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.git_ref }}
+          ref: ${{ inputs.git_tag }}
           fetch-depth: 0
 
       - name: Use Node.js 24 (latest LTS)
@@ -46,30 +95,49 @@ jobs:
       - name: Full release gate (validate + pack + packed-package consumer test)
         run: npm run release:check
 
-      - name: Verify tag / package.json / SDK_VERSION alignment and npm availability
+      - name: Verify tag / commit / package / SDK alignment and npm availability
         run: |
           set -euo pipefail
           PKG_VERSION="$(node -p "require('./package.json').version")"
           SDK_VERSION="$(node -p "require('./dist/index.js').SDK_VERSION")"
-          TAG="${{ inputs.git_ref }}"
-          TAG_VERSION="${TAG#v}"
-          echo "tag=$TAG_VERSION package.json=$PKG_VERSION SDK_VERSION=$SDK_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::git ref ($TAG_VERSION) != package.json version ($PKG_VERSION)"; exit 1
+          EXPECTED_TAG="v$PKG_VERSION"
+          ACTUAL_TAG="$(git describe --tags --exact-match HEAD)"
+          TAG_COMMIT="$(git rev-list -n 1 "$RELEASE_TAG")"
+          HEAD_COMMIT="$(git rev-parse HEAD)"
+          echo "release_tag=$RELEASE_TAG expected=$EXPECTED_TAG head_tag=$ACTUAL_TAG pkg=$PKG_VERSION sdk=$SDK_VERSION"
+          if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::input tag ($RELEASE_TAG) != v<package.json version> ($EXPECTED_TAG)"; exit 1
+          fi
+          if [ "$ACTUAL_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::checked-out HEAD tag ($ACTUAL_TAG) != $EXPECTED_TAG"; exit 1
           fi
           if [ "$SDK_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::SDK_VERSION ($SDK_VERSION) != package.json version ($PKG_VERSION)"; exit 1
           fi
+          if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+            echo "::error::tag $RELEASE_TAG ($TAG_COMMIT) does not resolve to HEAD ($HEAD_COMMIT)"; exit 1
+          fi
+          # The version must not already exist on npm — fail for every mode (validate-only included:
+          # we validate a FUTURE release, so an existing version is an error).
           if npm view "icarry-sdk@$PKG_VERSION" version >/dev/null 2>&1; then
             echo "::error::icarry-sdk@$PKG_VERSION already exists on npm"; exit 1
           fi
 
-      - name: Publish to npm with provenance
-        if: ${{ secrets.NPM_TOKEN != '' }}
-        run: npm publish --provenance --access public --tag "${{ inputs.npm_tag }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Validate-only (no publish)
+        if: inputs.publish_mode == 'validate-only'
+        run: echo "::notice::validate-only — release gate and version checks passed; nothing published."
 
-      - name: Publish skipped (no NPM_TOKEN configured)
-        if: ${{ secrets.NPM_TOKEN == '' }}
-        run: echo "::notice::NPM_TOKEN not configured — ran release gate and version checks, skipped publish."
+      - name: Require NPM_TOKEN for token mode
+        if: inputs.publish_mode == 'token' && env.NPM_TOKEN == ''
+        run: |
+          echo "::error::publish_mode=token requires an NPM_TOKEN secret to be configured."; exit 1
+
+      - name: Publish (trusted publishing via OIDC — no token)
+        if: inputs.publish_mode == 'trusted'
+        run: npm publish --access public --tag "$NPM_TAG"
+
+      - name: Publish (classic automation token + provenance)
+        if: inputs.publish_mode == 'token' && env.NPM_TOKEN != ''
+        run: npm publish --provenance --access public --tag "$NPM_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
