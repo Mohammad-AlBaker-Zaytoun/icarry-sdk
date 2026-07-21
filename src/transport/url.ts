@@ -177,6 +177,43 @@ function isLocalHost(hostname: string): boolean {
 }
 
 /**
+ * Counts non-overlapping occurrences of the API-prefix segment sequence inside a URL path,
+ * matching **whole path segments** case-insensitively. Segment-aware (not a substring count),
+ * so `/my-api-frontend-proxy` does NOT match `/api-frontend`, while `/api-frontend/api-frontend`
+ * counts 2. Empty segments and trailing slashes are ignored.
+ */
+function countApiPrefixOccurrences(pathname: string, apiPrefix: string): number {
+  const prefixSegs = apiPrefix
+    .split('/')
+    .filter((s) => s.length > 0)
+    .map((s) => s.toLowerCase());
+  if (prefixSegs.length === 0) {
+    return 0;
+  }
+  const segs = pathname
+    .split('/')
+    .filter((s) => s.length > 0)
+    .map((s) => s.toLowerCase());
+  let count = 0;
+  for (let i = 0; i + prefixSegs.length <= segs.length;) {
+    let match = true;
+    for (let j = 0; j < prefixSegs.length; j += 1) {
+      if (segs[i + j] !== prefixSegs[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      count += 1;
+      i += prefixSegs.length;
+    } else {
+      i += 1;
+    }
+  }
+  return count;
+}
+
+/**
  * Strictly validates and canonicalizes a configured `baseUrl` using the WHATWG `URL` parser
  * (never a bare regex). Returns `scheme://host[:port][/path]` with **no** credentials, query
  * string, or fragment. `http` is allowed only for local hosts; all remote hosts must use
@@ -189,10 +226,13 @@ export function validateAndNormalizeBaseUrl(raw: unknown): string {
   if (typeof raw !== 'string' || raw.trim() === '') {
     throw new ICarryConfigurationError('baseUrl is required and must be a non-empty string.');
   }
-  const trimmed = raw.trim();
-  if (hasControlChar(trimmed)) {
+  // Check the ORIGINAL string first: raw.trim() would strip CR/LF/tab, silently accepting
+  // e.g. "\nhttps://host\r\n". Only ordinary spaces (0x20) may be trimmed. hasControlChar
+  // rejects CR, LF, NUL, DEL, tab (0x09), and all other C0 controls.
+  if (hasControlChar(raw)) {
     throw new ICarryConfigurationError('baseUrl must not contain control characters.');
   }
+  const trimmed = raw.trim();
   if (trimmed.includes('\\')) {
     throw new ICarryConfigurationError('baseUrl must not contain backslashes.');
   }
@@ -233,6 +273,9 @@ export function validateAndNormalizeBaseUrl(raw: unknown): string {
       'baseUrl must use https for non-local hosts (http is allowed only for localhost, 127.0.0.1, and [::1]).'
     );
   }
+  if (countApiPrefixOccurrences(url.pathname, API_PREFIX) > 1) {
+    throw new ICarryConfigurationError('baseUrl must contain the API prefix at most once.');
+  }
 
   const path = url.pathname.replace(/\/+$/, '');
   const canonical = `${url.origin}${path}`;
@@ -264,6 +307,9 @@ export function resolveApiRoot(baseUrl: string, apiPrefix: string = API_PREFIX):
     base = new URL(baseUrl);
   } catch {
     throw new ICarryConfigurationError('baseUrl could not be parsed into an API root.');
+  }
+  if (countApiPrefixOccurrences(base.pathname, apiPrefix) > 1) {
+    throw new ICarryConfigurationError('baseUrl must contain the API prefix at most once.');
   }
   const prefix = `/${apiPrefix.replace(/^\/+|\/+$/g, '')}`;
   const basePath = base.pathname.replace(/\/+$/, '');

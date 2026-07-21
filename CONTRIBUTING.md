@@ -15,13 +15,29 @@ npm ci
 Run the full quality gate before opening a PR — CI runs the same checks:
 
 ```bash
-npm run validate       # format:check + lint + typecheck + check:secrets + test:coverage + build
+npm run validate       # format:check + lint + typecheck + test:types + check:secrets + test:coverage + build + check:package + smoke:dist
 npm run smoke          # ESM + CJS consumer import smoke test (after build)
 npm pack --dry-run     # inspect the publishable tarball
 ```
 
 `npm run validate` is also what `prepublishOnly` runs. Individual steps are available too:
-`format:check`, `lint`, `typecheck`, `check:secrets`, `test`, `test:coverage`, `build`.
+`format:check`, `lint`, `typecheck`, `test:types`, `check:secrets`, `test`, `test:coverage`,
+`build`, `check:package`.
+
+### Releasing
+
+Maintainers **must** run the full release gate before publishing — do not run `npm publish`
+directly without it:
+
+```bash
+npm run release:check   # = validate:release = validate + npm pack --dry-run + smoke:package
+```
+
+`smoke:package` packs the real tarball, installs it into a temporary external project, and
+type-checks ESM (`.mts`) **and** CommonJS (`.cts`) consumers under strict `NodeNext` with
+`skipLibCheck: false` — so a broken ESM/CJS declaration export (e.g. `TS1479`) fails the release.
+`prepublishOnly` runs only `validate` (not `smoke:package`) to avoid a recursive `npm pack`; the
+packed-package check therefore lives in `release:check`/CI, which every release must pass.
 
 `npm run format` and `npm run lint:fix` auto-fix formatting/lint issues.
 

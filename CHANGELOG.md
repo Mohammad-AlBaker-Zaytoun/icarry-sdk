@@ -6,6 +6,85 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.4] - TypeScript package compatibility
+
+A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
+retry policy, authentication modes, ESM + CommonJS runtime output, TypeScript declarations, and
+zero runtime dependencies are preserved. No public API or runtime-behavior change; packaging,
+input validation, live-test privacy, and release safety are hardened.
+
+### Fixed
+
+- **CommonJS TypeScript resolution.** The package now exposes conditional declaration exports so a
+  strict `NodeNext` CommonJS consumer (`import x = require('icarry-sdk')`) resolves types via
+  `dist/index.d.cts` instead of the ESM `dist/index.d.ts`. Previously the top-level `types`
+  fallback pointed every consumer at the ESM declaration, which is wrong for CommonJS and can
+  surface as `TS1479` on strict/other resolvers.
+
+### Packaging
+
+- Export map is now `import` → `{ types: ./dist/index.d.ts, default: ./dist/index.js }` and
+  `require` → `{ types: ./dist/index.d.cts, default: ./dist/index.cjs }`, with `types` ordered
+  before `default` in each condition. Legacy `main`/`module`/`types` fields are retained. The
+  `./package.json` subpath export is unchanged.
+- New `scripts/check-package.mjs` (run inside `validate` after `build`) verifies the export-map
+  paths exist, both `dist/index.d.ts` and `dist/index.d.cts` ship, the built `SDK_VERSION` equals
+  `package.json.version`, and the ESM and CommonJS declarations export the identical public-symbol
+  set (no drift, no private transport exports leaking into one).
+
+### Security
+
+- **Raw `baseUrl` control-character rejection.** Control characters are now rejected on the
+  original input *before* trimming, so `"\nhttps://host\r\n"` can no longer be silently accepted.
+  CR, LF, tab, NUL, DEL, and other C0 controls are rejected; only ordinary surrounding spaces are
+  trimmed.
+- **Duplicate API-prefix rejection.** A `baseUrl` containing `/api-frontend` more than once as a
+  complete path segment sequence (e.g. `…/api-frontend/api-frontend`, mixed case, or triple) is
+  rejected with `ICarryConfigurationError` ("baseUrl must contain the API prefix at most once").
+  Matching is segment-aware and case-insensitive, so `/my-api-frontend-proxy` and custom base
+  paths such as `/icarry` are preserved. The same invariant is enforced in
+  `validateAndNormalizeBaseUrl` and `resolveApiRoot`, so the transport can never build a request
+  under `/api-frontend/api-frontend`.
+- **Privacy-safe live shape summaries.** `summarizeShape` no longer records raw object keys or
+  exact sizes. A new `sanitizeShapeKey` replaces dynamic/sensitive keys (emails, phone-like,
+  card/long-numeric, UUIDs, URLs, token/secret-like, tracking-like, over-long, or control-bearing)
+  with category labels (`[email-key]`, `[phone-key]`, `[numeric-key]`, `[long-id-key]`,
+  `[url-key]`, `[token-like-key]`, `[dynamic-key]`, `[long-key]`); safe schema-like identifiers
+  remain visible. Sizes are bucketed (`empty`/`one`/`few`/`many`), keys and element-kinds are
+  capped with a `truncated` flag, and nested contents are reported only as a kind — so values,
+  nested data, and exact counts never appear, and circular inputs cannot crash the summarizer.
+
+### Validation
+
+- `validate` now runs `check:package` after `build`. `validate:release` (= `validate` +
+  `npm pack --dry-run` + `smoke:package`) is unchanged; a `release:check` alias is added.
+  `prepublishOnly` remains a single, non-recursive `validate`.
+
+### Tests
+
+- The packed-package smoke test (`scripts/smoke-package.mjs`) now builds four separate external
+  consumers — `esm.mjs`, `cjs.cjs`, `consumer.mts`, `consumer.cts` — type-checks the two
+  TypeScript consumers under strict `NodeNext` with `skipLibCheck: false`, and asserts via
+  `--traceResolution` that the `require` condition resolves to `index.d.cts` and `import` to
+  `index.d.ts`. It fails on either an ESM or a CommonJS TypeScript resolution problem.
+- Added regression suites: export-map shape (`tests/package/export-map.test.ts`), duplicate-prefix
+  and raw-control-character `baseUrl` handling (`tests/security/base-url-prefix-control.test.ts`),
+  and privacy-safe shape summaries with dynamic-key masking (`tests/live/shape.test.ts`).
+
+### CI
+
+- Node matrix updated to `[18, 22, 24]` (18 = declared minimum; 22 = active LTS; 24 = current
+  LTS). Node 20 removed from the matrix as it has entered maintenance; comments corrected. A
+  packaging-integrity step runs on every entry and the packed-package smoke test runs on Node 24.
+  `engines.node` is unchanged (`>=18.0.0`).
+
+### Documentation
+
+- README/`SECURITY.md` clarify that live shape-summary property names are **not** assumed to be
+  schema identifiers (dynamic/sensitive keys are categorized), and document the duplicate-prefix
+  and raw-control-character `baseUrl` rules. No live iCarry response schema has been verified;
+  create/rate/track/payment shapes remain provisional.
+
 ## [0.1.3] - Configuration and release hardening
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing, retry policy,
@@ -223,7 +302,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.0...v0.1.1

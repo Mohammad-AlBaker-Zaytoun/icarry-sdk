@@ -155,9 +155,12 @@ The base URL is validated strictly at construction (parsed with the WHATWG `URL`
 an absolute **`https`** URL with **no** embedded credentials, query string, or fragment; plain
 `http` is accepted only for local development hosts (`localhost`, `127.0.0.1`, `[::1]`). Anything
 else (e.g. `https://user:pass@host`, `https://host?token=…`, `//host`, `javascript:`/`data:`/
-`file:`/`ftp:` schemes) throws an `ICarryConfigurationError`. Client inspection methods
-(`getBaseUrl()`, `toJSON()`, `toString()`) always return a sanitized value with no credentials,
-query, or fragment.
+`file:`/`ftp:` schemes) throws an `ICarryConfigurationError`. Control characters (CR, LF, tab,
+NUL, DEL, …) are rejected on the **original** input before trimming, and a `baseUrl` that already
+contains the `/api-frontend` prefix **more than once** as a path segment (e.g.
+`…/api-frontend/api-frontend`) is rejected — a custom base path such as `https://proxy.example.com/icarry`
+is preserved and resolves to `…/icarry/api-frontend`. Client inspection methods (`getBaseUrl()`,
+`toJSON()`, `toString()`) always return a sanitized value with no credentials, query, or fragment.
 
 ## Merchant flow
 
@@ -483,8 +486,12 @@ and packaging-slip checks run only when `ICARRY_TEST_TRACKING_NUMBER` / `ICARRY_
 are supplied). It never runs in CI and never uses real card data. Any future mutating or paid check
 requires a second explicit opt-in (`ICARRY_ALLOW_MUTATIONS=true` / `ICARRY_ALLOW_PAYMENT_TESTS=true`)
 and none ship enabled. The suite can log a privacy-preserving `summarizeShape` of provisional
-responses — value **kinds** and property **names** only, never values, ids, or PII — to help tighten
-the still-unverified response types over time.
+responses — value **kinds** plus a coarse size bucket and **sanitized** property names — to help
+tighten the still-unverified response types over time. Property names are **not** assumed to be
+schema identifiers: because some APIs return dictionary-like objects keyed by emails, phone
+numbers, ids, tokens, or card-like strings, every key is passed through a sanitizer that replaces
+anything dynamic or sensitive with a category label (e.g. `[email-key]`). Values, nested contents,
+exact sizes, and PII never appear in a summary.
 
 ## Contributing
 

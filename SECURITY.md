@@ -78,9 +78,18 @@ The `baseUrl` is validated strictly at construction with the WHATWG `URL` API an
 `scheme://host[:port][/path]`. Embedded credentials, query strings, and fragments are rejected, as
 are protocol-relative URLs and non-http(s) schemes (`javascript:`, `data:`, `file:`, `ftp:`). Plain
 `http` is permitted only for local development hosts (`localhost`, `127.0.0.1`, `[::1]`); every
-remote host must use `https`. Header names/values and the `User-Agent` are validated to reject CR,
-LF, NUL, and other control characters, preventing header/response splitting. Client inspection
-methods never expose credentials, query strings, or fragments from the configured URL.
+remote host must use `https`. Control characters are rejected on the original `baseUrl` input
+before trimming (so `"\nhttps://host\r\n"` cannot slip through), and a `baseUrl` that repeats the
+`/api-frontend` prefix as a path segment is rejected so the transport can never issue requests
+under `/api-frontend/api-frontend`. Header names/values and the `User-Agent` are validated to
+reject CR, LF, NUL, and other control characters, preventing header/response splitting. Client
+inspection methods never expose credentials, query strings, or fragments from the configured URL.
+
+The optional, env-gated live-contract tests can summarize provisional response shapes for schema
+work. Those summaries record value kinds, coarse size buckets, and **sanitized** property names
+only — property names are not assumed to be safe schema identifiers, so dynamic/sensitive keys
+(emails, phone numbers, ids, tokens, card-like strings) are replaced with category labels. No
+values, nested contents, exact sizes, or PII are recorded or logged.
 
 ## Dependency security
 
