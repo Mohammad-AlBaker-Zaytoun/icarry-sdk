@@ -37,7 +37,7 @@ describe('duplicate /api-frontend prefix rejection (segment-aware)', () => {
       'https://test.icarry.com/api-frontend/api-frontend/',
     ]) {
       expect(() => validateAndNormalizeBaseUrl(bad)).toThrow(ICarryConfigurationError);
-      expect(() => validateAndNormalizeBaseUrl(bad)).toThrow(/at most once/);
+      expect(() => validateAndNormalizeBaseUrl(bad)).toThrow(/only once and must be the final/);
     }
   });
 
@@ -61,6 +61,44 @@ describe('duplicate /api-frontend prefix rejection (segment-aware)', () => {
       const root = resolveApiRoot(validateAndNormalizeBaseUrl(base));
       const occurrences = root.pathname.toLowerCase().split('/api-frontend').length - 1;
       expect(occurrences).toBe(1);
+    }
+  });
+});
+
+describe('API prefix placement (must be the final path segment)', () => {
+  const accept = [
+    'https://host',
+    'https://host/',
+    'https://host/api-frontend',
+    'https://host/API-Frontend/',
+    'https://host/custom',
+    'https://host/custom/api-frontend',
+    'https://host/my-api-frontend-proxy',
+  ];
+  const reject = [
+    'https://host/api-frontend/proxy',
+    'https://host/api-frontend/custom/path',
+    'https://host/custom/api-frontend/proxy',
+    'https://host/api-frontend/api-frontend',
+    'https://host/API-Frontend/api-frontend',
+    'https://host/api-frontend/api-frontend/api-frontend',
+  ];
+
+  it('accepts a prefix only when absent or the final segment', () => {
+    for (const base of accept) {
+      expect(() => validateAndNormalizeBaseUrl(base)).not.toThrow();
+      // Final outgoing API root ends with exactly one complete /api-frontend segment.
+      const root = resolveApiRoot(validateAndNormalizeBaseUrl(base));
+      const segs = root.pathname.split('/').filter(Boolean);
+      expect(segs.filter((s) => s.toLowerCase() === 'api-frontend').length).toBe(1);
+      expect(segs[segs.length - 1]?.toLowerCase()).toBe('api-frontend');
+    }
+  });
+
+  it('rejects a prefix that appears mid-path or more than once', () => {
+    for (const base of reject) {
+      expect(() => validateAndNormalizeBaseUrl(base)).toThrow(ICarryConfigurationError);
+      expect(() => resolveApiRoot(base)).toThrow(ICarryConfigurationError);
     }
   });
 });

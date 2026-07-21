@@ -87,8 +87,12 @@ inspection methods never expose credentials, query strings, or fragments from th
 
 The optional, env-gated live-contract tests can summarize provisional response shapes for schema
 work. Those summaries record value kinds, coarse size buckets, and **sanitized** property names
-only — property names are not assumed to be safe schema identifiers, so dynamic/sensitive keys
-(emails, phone numbers, ids, tokens, card-like strings) are replaced with category labels. No
+only — property names are not assumed to be safe schema identifiers. A sensitive-keyword check
+(token/secret/password/authorization/bearer/jwt/apiKey/privateKey/card/pan/cvv/…) runs **before**
+the generic identifier check, so identifier-shaped secrets (e.g. `BearerSecretToken`) are masked as
+`[token-like-key]`; only a small explicit allowlist of common schema keys stays readable, and other
+dynamic keys (emails, phones, ids, URLs, card-like strings) become category labels. Value kinds are
+aggregated per category so colliding keys cannot overwrite each other and no raw key is emitted. No
 values, nested contents, exact sizes, or PII are recorded or logged.
 
 ## Dependency security

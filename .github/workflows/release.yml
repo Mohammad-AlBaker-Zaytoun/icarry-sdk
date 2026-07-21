@@ -1,0 +1,75 @@
+name: Release (manual)
+
+# Manual-only. Never runs on push or pull_request, so it cannot fail continuously if npm
+# credentials are not configured. It always runs the full release gate; it only PUBLISHES when an
+# NPM_TOKEN secret (or npm trusted publishing) is available — otherwise the publish step is skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Tag or commit to release (e.g. v0.1.5)
+        required: true
+        type: string
+      npm_tag:
+        description: npm dist-tag
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance / trusted publishing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the selected tag/commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Use Node.js 24 (latest LTS)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full release gate (validate + pack + packed-package consumer test)
+        run: npm run release:check
+
+      - name: Verify tag / package.json / SDK_VERSION alignment and npm availability
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          SDK_VERSION="$(node -p "require('./dist/index.js').SDK_VERSION")"
+          TAG="${{ inputs.git_ref }}"
+          TAG_VERSION="${TAG#v}"
+          echo "tag=$TAG_VERSION package.json=$PKG_VERSION SDK_VERSION=$SDK_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::git ref ($TAG_VERSION) != package.json version ($PKG_VERSION)"; exit 1
+          fi
+          if [ "$SDK_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::SDK_VERSION ($SDK_VERSION) != package.json version ($PKG_VERSION)"; exit 1
+          fi
+          if npm view "icarry-sdk@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "::error::icarry-sdk@$PKG_VERSION already exists on npm"; exit 1
+          fi
+
+      - name: Publish to npm with provenance
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        run: npm publish --provenance --access public --tag "${{ inputs.npm_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish skipped (no NPM_TOKEN configured)
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        run: echo "::notice::NPM_TOKEN not configured — ran release gate and version checks, skipped publish."

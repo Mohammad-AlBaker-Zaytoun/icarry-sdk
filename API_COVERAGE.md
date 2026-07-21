@@ -47,6 +47,14 @@ missing/misleading content type is read as text and JSON-parsed only if it parse
 therefore never raise `ICarryResponseParseError` for a successful plain-text body. `getPackagingSlip`
 returns a binary-or-JSON discriminated union based on the response content type.
 
+Every `expect: 'auto'` endpoint is typed as **`AmbiguousApiResult`** (`object | unknown[] | string |
+number | boolean | null | undefined`), not `ExtensibleResponse` — because the parser can legitimately
+return any of those and the live shape is unverified. These types must stay `AmbiguousApiResult`
+until a repeatable, documented live-contract observation justifies narrowing; a mocked example that
+happens to return an object is **not** sufficient. Narrowing after `1.0.0` is a semver-significant
+change. `ExtensibleResponse` is reserved for the **High**-confidence, confidently object-shaped
+responses above.
+
 ## Requires live verification
 
 The following cannot be confirmed without live iCarry test credentials and are modeled defensively:

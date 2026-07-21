@@ -6,6 +6,70 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.5] - Release and metadata hardening
+
+A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
+retry policy, authentication modes, ESM + CommonJS runtime output, TypeScript declarations
+(`dist/index.d.ts` for ESM, `dist/index.d.cts` for CommonJS), and zero runtime dependencies are
+preserved. No public API or runtime-behavior change for valid configurations.
+
+### Fixed
+
+- **API prefix must be the final path segment.** A `baseUrl` whose path contains `/api-frontend`
+  once but **not** as the last segment (e.g. `…/api-frontend/proxy`, `…/custom/api-frontend/proxy`)
+  is now rejected instead of resolving to a doubled `…/api-frontend/proxy/api-frontend`. The check
+  is segment-aware and case-insensitive via a shared `analyzeApiPrefix` helper (`{ count,
+  endsWithPrefix }`) used by both `validateAndNormalizeBaseUrl` and `resolveApiRoot`, and the
+  resolved API root is re-verified to contain the prefix exactly once as its final segment.
+
+### Security
+
+- **Identifier-shaped secret keys masked in live shape summaries.** `sanitizeShapeKey` now applies
+  a sensitive-keyword check (token/secret/password/authorization/bearer/jwt/apiKey/privateKey/card/
+  pan/cvv/cvc/securityCode/session/cookie/credential, case-insensitive substring) **before** the
+  generic identifier check, so identifier-shaped secrets such as `BearerSecretToken`,
+  `apiKeySecretValue`, `SUPERSECRETTOKEN`, and `password123` are masked as `[token-like-key]`
+  instead of shown. A small explicit `SAFE_SCHEMA_KEYS` allowlist keeps common schema keys readable.
+- **Collision-safe key aggregation.** Shape summaries now aggregate value kinds per sanitized
+  category (`keys: Record<string, ValueKind[]>`), so two raw keys that map to the same category
+  (e.g. two emails) no longer overwrite each other's structural kind, no raw key is emitted, and no
+  per-category occurrence count is exposed.
+
+### Validation
+
+- No script-behavior change to `validate`/`validate:release`; `check:package` continues to verify
+  export-map paths, both declarations, `SDK_VERSION`, and `.d.ts`/`.d.cts` symbol parity.
+
+### Release
+
+- Added `release:publish` (`release:check && npm publish`) as the required publish path; maintainers
+  must use it rather than a bare `npm publish`, which would skip the packed-package consumer test.
+  `prepublishOnly` remains a single, non-recursive `validate` (the packed-package test runs its own
+  `npm pack`, so it stays out of `prepublishOnly`). Verified npm/Git alignment for 0.1.4: npm
+  `latest` = 0.1.4, npm `gitHead` = the `v0.1.4` tag commit = release commit.
+
+### CI
+
+- Added an optional manual release workflow (`.github/workflows/release.yml`, `workflow_dispatch`
+  only) that checks out the selected tag, runs `release:check`, verifies tag ==
+  `package.json.version` == `SDK_VERSION` and that the npm version is unused, then publishes with
+  provenance only when an `NPM_TOKEN` secret is configured (otherwise it skips publish rather than
+  failing). Node lifecycle comments corrected: 18 = declared legacy minimum (EOL), 20 = EOL and
+  omitted, 22 = supported LTS, 24 = latest LTS. `engines.node` unchanged (`>=18.0.0`).
+
+### Documentation
+
+- CONTRIBUTING/API_COVERAGE/README: unverified `expect: 'auto'` endpoints must stay
+  `AmbiguousApiResult` (not `ExtensibleResponse`) until a repeatable, documented live-contract
+  observation justifies narrowing — and narrowing after `1.0.0` is semver-significant. README/
+  SECURITY clarify the conservative shape-key allowlist/category behavior. Node lifecycle wording
+  corrected. No live iCarry response schema has been verified.
+
+### Tests
+
+- Added API-prefix placement tests (mid-path rejection, trailing-only acceptance, final-root
+  exactly-once) and identifier-shaped-secret + collision-aggregation shape-summary tests.
+
 ## [0.1.4] - TypeScript package compatibility
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
@@ -302,7 +366,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.1...v0.1.2

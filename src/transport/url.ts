@@ -176,19 +176,28 @@ function isLocalHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(hostname.toLowerCase());
 }
 
+/** Structural analysis of how the API-prefix segment sequence appears in a URL path. */
+interface ApiPrefixAnalysis {
+  /** Non-overlapping whole-segment occurrences of the prefix sequence. */
+  count: number;
+  /** Whether the path's final segment(s) are exactly the prefix sequence. */
+  endsWithPrefix: boolean;
+}
+
 /**
- * Counts non-overlapping occurrences of the API-prefix segment sequence inside a URL path,
- * matching **whole path segments** case-insensitively. Segment-aware (not a substring count),
- * so `/my-api-frontend-proxy` does NOT match `/api-frontend`, while `/api-frontend/api-frontend`
- * counts 2. Empty segments and trailing slashes are ignored.
+ * Analyzes how the API-prefix segment sequence appears inside a URL path, matching **whole path
+ * segments** case-insensitively. Segment-aware (not a substring count), so `/my-api-frontend-proxy`
+ * does NOT match `/api-frontend`, while `/api-frontend/api-frontend` counts 2. Empty segments and
+ * trailing slashes are ignored. `endsWithPrefix` distinguishes a valid trailing prefix
+ * (`/custom/api-frontend`) from an invalid mid-path one (`/api-frontend/proxy`).
  */
-function countApiPrefixOccurrences(pathname: string, apiPrefix: string): number {
+function analyzeApiPrefix(pathname: string, apiPrefix: string): ApiPrefixAnalysis {
   const prefixSegs = apiPrefix
     .split('/')
     .filter((s) => s.length > 0)
     .map((s) => s.toLowerCase());
   if (prefixSegs.length === 0) {
-    return 0;
+    return { count: 0, endsWithPrefix: false };
   }
   const segs = pathname
     .split('/')
@@ -210,7 +219,31 @@ function countApiPrefixOccurrences(pathname: string, apiPrefix: string): number 
       i += 1;
     }
   }
-  return count;
+  let endsWithPrefix = segs.length >= prefixSegs.length;
+  if (endsWithPrefix) {
+    const start = segs.length - prefixSegs.length;
+    for (let j = 0; j < prefixSegs.length; j += 1) {
+      if (segs[start + j] !== prefixSegs[j]) {
+        endsWithPrefix = false;
+        break;
+      }
+    }
+  }
+  return { count, endsWithPrefix };
+}
+
+/**
+ * Enforces the placement invariant: the API prefix may appear **at most once**, and if present it
+ * must be the **final** path segment sequence. Rejects `/api-frontend/proxy` (mid-path) and
+ * `/api-frontend/api-frontend` (duplicate) alike.
+ */
+function assertApiPrefixPlacement(pathname: string, apiPrefix: string): void {
+  const { count, endsWithPrefix } = analyzeApiPrefix(pathname, apiPrefix);
+  if (count > 1 || (count === 1 && !endsWithPrefix)) {
+    throw new ICarryConfigurationError(
+      'The API prefix may appear only once and must be the final baseUrl path segment.'
+    );
+  }
 }
 
 /**
@@ -273,9 +306,7 @@ export function validateAndNormalizeBaseUrl(raw: unknown): string {
       'baseUrl must use https for non-local hosts (http is allowed only for localhost, 127.0.0.1, and [::1]).'
     );
   }
-  if (countApiPrefixOccurrences(url.pathname, API_PREFIX) > 1) {
-    throw new ICarryConfigurationError('baseUrl must contain the API prefix at most once.');
-  }
+  assertApiPrefixPlacement(url.pathname, API_PREFIX);
 
   const path = url.pathname.replace(/\/+$/, '');
   const canonical = `${url.origin}${path}`;
@@ -308,14 +339,13 @@ export function resolveApiRoot(baseUrl: string, apiPrefix: string = API_PREFIX):
   } catch {
     throw new ICarryConfigurationError('baseUrl could not be parsed into an API root.');
   }
-  if (countApiPrefixOccurrences(base.pathname, apiPrefix) > 1) {
-    throw new ICarryConfigurationError('baseUrl must contain the API prefix at most once.');
-  }
+  assertApiPrefixPlacement(base.pathname, apiPrefix);
+  const analysis = analyzeApiPrefix(base.pathname, apiPrefix);
   const prefix = `/${apiPrefix.replace(/^\/+|\/+$/g, '')}`;
   const basePath = base.pathname.replace(/\/+$/, '');
-  const rootPath = basePath.toLowerCase().endsWith(prefix.toLowerCase())
-    ? basePath
-    : `${basePath}${prefix}`;
+  // Append the prefix only when it is not already the final segment (count 0). When it is already
+  // the trailing prefix (count 1 + endsWithPrefix), keep it as-is.
+  const rootPath = analysis.endsWithPrefix ? basePath : `${basePath}${prefix}`;
   let root: URL;
   try {
     root = new URL(`${base.origin}${rootPath}`);
@@ -325,6 +355,14 @@ export function resolveApiRoot(baseUrl: string, apiPrefix: string = API_PREFIX):
   if (root.origin !== base.origin || root.search !== '' || root.hash !== '') {
     throw new ICarryConfigurationError(
       'Resolved API root is unsafe (origin/query/fragment mismatch).'
+    );
+  }
+  // Final invariant: the resolved root must contain the API prefix exactly once, as its last
+  // segment sequence. Guards against any divergence introduced by URL normalization.
+  const finalAnalysis = analyzeApiPrefix(root.pathname, apiPrefix);
+  if (finalAnalysis.count !== 1 || !finalAnalysis.endsWithPrefix) {
+    throw new ICarryConfigurationError(
+      'Resolved API root must end with exactly one API prefix segment.'
     );
   }
   return root;

@@ -55,11 +55,11 @@ npm install icarry-sdk
 
 ## Runtime requirements
 
-- **Node.js ≥ 18** is the declared minimum (`engines`). Actively tested in CI on Node **18, 20, and
-  22**. Node 18 is retained for backward compatibility even though it is past upstream maintenance;
-  prefer a maintained LTS (20/22) in production. Uses the global `fetch` and `AbortController`, or any
-  runtime with a WHATWG
-  `fetch`. You may inject a custom `fetch` via options.
+- **Node.js ≥ 18** is the declared minimum (`engines`). Actively tested in CI on Node **18, 22, and
+  24**. Node 18 is the declared legacy minimum and is now EOL, retained only for backward-compat
+  testing; Node 20 is EOL and omitted. Prefer a supported LTS — **22** (supported LTS) or **24**
+  (latest LTS) — in production. Uses the global `fetch` and `AbortController`, or any runtime with a
+  WHATWG `fetch`. You may inject a custom `fetch` via options.
 - Ships both **ESM** and **CommonJS** builds with full TypeScript declarations. Zero runtime dependencies.
 
 ## Quick start
@@ -246,8 +246,9 @@ const shipment = await icarry.onDemand.createShipment({
 const tracking = await icarry.shipments.track('TRACKING_NUMBER');
 ```
 
-The tracking response shape is not documented by iCarry — it is returned as an open, read-only record
-(`ExtensibleResponse`). Read fields defensively.
+The tracking response shape is not documented by iCarry — it is parsed with `expect: 'auto'` and
+typed as **`AmbiguousApiResult`** (it could be an object, array, string, etc.). Narrow it (e.g.
+`typeof result === 'object' && result !== null`) before reading fields.
 
 ## Cancellation
 
@@ -488,10 +489,13 @@ requires a second explicit opt-in (`ICARRY_ALLOW_MUTATIONS=true` / `ICARRY_ALLOW
 and none ship enabled. The suite can log a privacy-preserving `summarizeShape` of provisional
 responses — value **kinds** plus a coarse size bucket and **sanitized** property names — to help
 tighten the still-unverified response types over time. Property names are **not** assumed to be
-schema identifiers: because some APIs return dictionary-like objects keyed by emails, phone
-numbers, ids, tokens, or card-like strings, every key is passed through a sanitizer that replaces
-anything dynamic or sensitive with a category label (e.g. `[email-key]`). Values, nested contents,
-exact sizes, and PII never appear in a summary.
+schema identifiers. A sensitive-keyword check runs **before** the generic identifier check, so
+identifier-shaped secrets (`BearerSecretToken`, `apiKeySecretValue`, `SUPERSECRETTOKEN`, …) are
+masked as `[token-like-key]`; only a small, explicit allowlist of common schema keys stays readable,
+and dynamic keys (emails, phones, ids, URLs, card-like strings) become category labels
+(`[email-key]`, `[dynamic-key]`, …). Value kinds are aggregated per category (`Record<string,
+kind[]>`) so colliding keys can't overwrite each other and no raw key, value, nested content, exact
+size, or PII ever appears in a summary.
 
 ## Contributing
 

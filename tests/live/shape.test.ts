@@ -1,76 +1,84 @@
 import { describe, it, expect } from 'vitest';
 import { summarizeShape, sanitizeShapeKey } from './shape';
 
-describe('sanitizeShapeKey (dynamic/sensitive keys categorized)', () => {
+describe('sanitizeShapeKey (conservative allowlist + sensitive-keyword masking)', () => {
   it('keeps safe schema-like identifiers visible', () => {
-    for (const k of ['id', 'name', 'status', 'createdAt', 'countryId', 'trackingNumber']) {
+    for (const k of ['id', 'name', 'status', 'createdAt', 'countryId', 'trackingNumber', 'items']) {
       expect(sanitizeShapeKey(k)).toBe(k);
     }
   });
 
-  it('categorizes dynamic/sensitive keys without echoing them', () => {
-    const cases: Array<[string, string]> = [
-      ['person@example.com', '[email-key]'],
-      ['+96170123456', '[phone-key]'],
-      ['1111222233334444', '[numeric-key]'],
-      ['550e8400-e29b-41d4-a716-446655440000', '[long-id-key]'],
-      ['https://example.com/private', '[url-key]'],
-      ['Bearer-secret-token', '[token-like-key]'],
-      ['TRACKING-123456789', '[dynamic-key]'],
-    ];
-    for (const [raw, category] of cases) {
-      const out = sanitizeShapeKey(raw);
-      expect(out).toBe(category);
-      expect(out).not.toContain(raw);
+  it('masks identifier-shaped secrets before the generic identifier check', () => {
+    for (const k of [
+      'BearerSecretToken',
+      'SUPERSECRETTOKEN',
+      'password123',
+      'apiKeySecretValue',
+      'AuthorizationBearer',
+      'jwtTokenValue',
+      'privateKeyData',
+      'cardNumberSecret',
+      'cvvValue',
+      'APIKEYSECRETVALUE',
+      'privateKeyMaterial',
+    ]) {
+      const out = sanitizeShapeKey(k);
+      expect(out).toBe('[token-like-key]');
+      expect(out).not.toContain(k);
     }
   });
 
-  it('truncates extremely long keys and masks control chars', () => {
+  it('categorizes other dynamic/sensitive keys', () => {
+    expect(sanitizeShapeKey('person@example.com')).toBe('[email-key]');
+    expect(sanitizeShapeKey('+96170123456')).toBe('[phone-key]');
+    expect(sanitizeShapeKey('1111222233334444')).toBe('[numeric-key]');
+    expect(sanitizeShapeKey('550e8400-e29b-41d4-a716-446655440000')).toBe('[long-id-key]');
+    expect(sanitizeShapeKey('https://example.com/private')).toBe('[url-key]');
     expect(sanitizeShapeKey('a'.repeat(200))).toBe('[long-key]');
     expect(sanitizeShapeKey('col\r\nInjected')).toBe('[dynamic-key]');
   });
 });
 
-describe('summarizeShape (privacy-safe structural summary)', () => {
+describe('summarizeShape (privacy-safe, collision-aggregated)', () => {
   it('summarizes primitives and nullish', () => {
     expect(summarizeShape(null)).toEqual({ kind: 'null' });
-    expect(summarizeShape(undefined)).toEqual({ kind: 'undefined' });
     expect(summarizeShape('x')).toEqual({ kind: 'string' });
     expect(summarizeShape(1)).toEqual({ kind: 'number' });
     expect(summarizeShape(true)).toEqual({ kind: 'boolean' });
   });
 
-  it('records sanitized keys + value kinds, never raw keys or values', () => {
+  it('aggregates value kinds per category so colliding keys do not overwrite', () => {
     const payload = {
-      'person@example.com': { secret: 1 },
-      'TRACKING-123456789': 'shipped',
-      id: 5,
-      status: 'ok',
+      'person@example.com': { a: 1 },
+      'other@example.com': 'hello',
+      'a-b!': [1],
+      'c d?': 2,
     };
     const s = summarizeShape(payload);
+    expect(s.keys?.['[email-key]']).toEqual(['object', 'string']); // both kinds retained
+    // two non-identifier keys aggregated under one category
+    expect(s.keys?.['[dynamic-key]']?.slice().sort()).toEqual(['array', 'number']);
     const json = JSON.stringify(s);
-    expect(s.kind).toBe('object');
-    // safe keys visible, sensitive keys categorized
-    expect(s.keys).toEqual({
-      '[email-key]': 'object',
-      '[dynamic-key]': 'string',
-      id: 'number',
-      status: 'string',
-    });
-    for (const leak of ['person@example.com', 'TRACKING-123456789', 'shipped', 'secret']) {
+    for (const leak of ['person@example.com', 'other@example.com', 'hello', 'a-b', 'c d']) {
       expect(json).not.toContain(leak);
     }
   });
 
-  it('buckets object/array size instead of exact counts', () => {
+  it('never emits a raw sensitive key and keeps safe keys readable', () => {
+    const payload = { BearerSecretToken: 'x', trackingNumber: 'y', id: 1 };
+    const s = summarizeShape(payload);
+    expect(Object.keys(s.keys ?? {}).sort()).toEqual(['[token-like-key]', 'id', 'trackingNumber']);
+    expect(JSON.stringify(s)).not.toContain('BearerSecretToken');
+    expect(JSON.stringify(s)).not.toContain('x'); // no value
+  });
+
+  it('buckets sizes and never exposes exact counts', () => {
     expect(summarizeShape([]).size).toBe('empty');
     expect(summarizeShape([1]).size).toBe('one');
     expect(summarizeShape([1, 2, 3]).size).toBe('few');
-    expect(summarizeShape(Array.from({ length: 500 }, (_, i) => i)).size).toBe('many');
-    // exact length never present
-    expect(JSON.stringify(summarizeShape(Array.from({ length: 500 }, (_, i) => i)))).not.toContain(
-      '500'
-    );
+    const big = Array.from({ length: 500 }, (_, i) => i);
+    expect(summarizeShape(big).size).toBe('many');
+    expect(JSON.stringify(summarizeShape(big))).not.toContain('500');
   });
 
   it('summarizes arrays with distinct element kinds', () => {
@@ -82,7 +90,7 @@ describe('summarizeShape (privacy-safe structural summary)', () => {
     });
   });
 
-  it('truncates large objects and flags it', () => {
+  it('caps large objects (distinct categories) and flags truncation', () => {
     const big: Record<string, number> = {};
     for (let i = 0; i < 100; i += 1) big[`field${i}`] = i;
     const s = summarizeShape(big);
@@ -94,7 +102,7 @@ describe('summarizeShape (privacy-safe structural summary)', () => {
     const circular: Record<string, unknown> = { id: 1 };
     circular['self'] = circular;
     const s = summarizeShape(circular);
-    expect(s.keys).toEqual({ id: 'number', self: 'object' }); // nested = kind only
+    expect(s.keys).toEqual({ id: ['number'], self: ['object'] });
     expect(() => JSON.stringify(s)).not.toThrow();
   });
 
@@ -110,5 +118,8 @@ describe('summarizeShape (privacy-safe structural summary)', () => {
     for (const secret of Object.values(payload)) {
       expect(json).not.toContain(secret);
     }
+    // `token` key matches a sensitive keyword → masked (not shown as a readable key).
+    expect(json).not.toContain('"token"');
+    expect(summarizeShape(payload).keys?.['[token-like-key]']).toEqual(['string']);
   });
 });

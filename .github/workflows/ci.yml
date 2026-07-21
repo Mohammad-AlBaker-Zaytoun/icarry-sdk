@@ -13,9 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 18 = declared minimum (engines >=18), retained for backward-compatibility testing even
-        # though it is past upstream maintenance. 22 is an active LTS line; 24 is the current LTS
-        # target. (Node 20 is omitted — it has entered maintenance and 22/24 cover current LTS.)
+        # Node lifecycle (as of this release):
+        #   18 — declared legacy minimum (engines >=18); EOL, kept only for backward-compat testing
+        #   20 — EOL; omitted
+        #   22 — supported LTS compatibility target
+        #   24 — latest LTS target
         node-version: [18, 22, 24]
     steps:
       - uses: actions/checkout@v5
