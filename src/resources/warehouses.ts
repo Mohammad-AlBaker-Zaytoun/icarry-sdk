@@ -1,10 +1,17 @@
 /**
  * Warehouses resource.
  *
- * Note the two response casings iCarry uses: the `GetById`/`GetAll` reads return snake_case
- * entities, while `createWarehouseForMarketPlace` returns PascalCase — mapped here into one
- * public {@link Warehouse} shape. The create input's country field is serialized to the
- * wire's misspelled `County` (which iCarry uses to mean *country*).
+ * Two iCarry quirks are absorbed here (both verified live 2026-07-30):
+ *
+ * - **Mixed casing.** `GetById` returns a snake_case entity, while `GetAll` and
+ *   `createWarehouseForMarketPlace` return PascalCase. The mapper reads both spellings per
+ *   field, so one public {@link Warehouse} shape covers every route.
+ * - **List envelope.** `GetAll` does not return an array; it returns a DataTables-style
+ *   `{ Data, draw, recordsFiltered, recordsTotal, … }` envelope, unwrapped by
+ *   {@link WarehousesResource.list} / {@link WarehousesResource.listWithMeta}.
+ *
+ * The create input's country field is serialized to the wire's misspelled `County` (which
+ * iCarry uses to mean *country*).
  *
  * @packageDocumentation
  */
@@ -16,9 +23,11 @@ import { ICarryValidationError } from '../errors';
 import type { RequestOptions } from '../types';
 import {
   omitUndefined,
+  readWireField,
   requireNonEmptyString,
   requirePositiveId,
   toRequestFields,
+  unwrapWireList,
 } from './_shared';
 
 /** A warehouse / pickup location. */
@@ -56,31 +65,36 @@ export interface CreateMarketplaceWarehouseInput {
 
 /** Options for {@link WarehousesResource.list}. */
 export interface ListWarehousesOptions extends RequestOptions {
-  /** Optional name filter (`?name=`). */
+  /** Optional name filter (`?name=`), applied server-side. */
   name?: string;
 }
 
-function fromWireWarehouseSnake(wire: Record<string, unknown>): Warehouse {
-  return {
-    name: String(wire.name ?? ''),
-    isActive: Boolean(wire.is_active),
-    id: Number(wire.id),
-    ...(wire.admin_comment !== undefined ? { adminComment: String(wire.admin_comment) } : {}),
-    ...(wire.address_id !== undefined ? { addressId: Number(wire.address_id) } : {}),
-  };
+/** A warehouse list plus the DataTables counters `GetAll` reports alongside it. */
+export interface WarehouseListPage {
+  warehouses: Warehouse[];
+  /** Total records before the `name` filter. Absent if the endpoint returned a bare array. */
+  recordsTotal?: number;
+  /** Records matching the `name` filter. Absent if the endpoint returned a bare array. */
+  recordsFiltered?: number;
 }
 
-function fromWireWarehousePascal(wire: Record<string, unknown>): Warehouse {
+/**
+ * Maps a warehouse from either casing iCarry uses (`GetById` is snake_case; `GetAll` and the
+ * marketplace create response are PascalCase), so the same mapper is correct for every route.
+ */
+function fromWireWarehouse(wire: Record<string, unknown>): Warehouse {
+  const adminComment = readWireField(wire, 'AdminComment', 'admin_comment');
+  const addressId = readWireField(wire, 'AddressId', 'address_id');
+  const vendorId = readWireField(wire, 'VendorId', 'vendor_id');
+  const limitedToStores = readWireField(wire, 'LimitedToStores', 'limited_to_stores');
   return {
-    name: String(wire.Name ?? ''),
-    isActive: Boolean(wire.IsActive),
-    id: Number(wire.Id),
-    ...(wire.AdminComment !== undefined ? { adminComment: String(wire.AdminComment) } : {}),
-    ...(wire.AddressId !== undefined ? { addressId: Number(wire.AddressId) } : {}),
-    ...(wire.VendorId !== undefined ? { vendorId: Number(wire.VendorId) } : {}),
-    ...(wire.LimitedToStores !== undefined
-      ? { limitedToStores: Boolean(wire.LimitedToStores) }
-      : {}),
+    name: String(readWireField(wire, 'Name', 'name') ?? ''),
+    isActive: Boolean(readWireField(wire, 'IsActive', 'is_active')),
+    id: Number(readWireField(wire, 'Id', 'id')),
+    ...(adminComment !== undefined ? { adminComment: String(adminComment) } : {}),
+    ...(addressId !== undefined ? { addressId: Number(addressId) } : {}),
+    ...(vendorId !== undefined ? { vendorId: Number(vendorId) } : {}),
+    ...(limitedToStores !== undefined ? { limitedToStores: Boolean(limitedToStores) } : {}),
   };
 }
 
@@ -136,20 +150,39 @@ export class WarehousesResource {
       retryable: true,
       ...toRequestFields(options),
     });
-    return fromWireWarehouseSnake(wire ?? {});
+    return fromWireWarehouse(wire ?? {});
   }
 
-  /** Lists warehouses, optionally filtered by `name`. */
+  /**
+   * Lists warehouses, optionally filtered by `name`.
+   *
+   * Use {@link WarehousesResource.listWithMeta} when you also need the record counters.
+   */
   async list(options: ListWarehousesOptions = {}): Promise<Warehouse[]> {
+    return (await this.listWithMeta(options)).warehouses;
+  }
+
+  /**
+   * Lists warehouses and the record counters reported by `GetAll`.
+   *
+   * `GetAll` answers with a DataTables envelope (`{ Data, recordsTotal, recordsFiltered, … }`);
+   * a bare array is still accepted, in which case the counters are absent.
+   */
+  async listWithMeta(options: ListWarehousesOptions = {}): Promise<WarehouseListPage> {
     const { name, ...rest } = options;
-    const wire = await this.http.request<Array<Record<string, unknown>>>({
+    const wire = await this.http.request<unknown>({
       method: 'GET',
       path: ENDPOINTS.warehouseGetAll,
       query: { name }, // buildQuery skips undefined
       retryable: true,
       ...toRequestFields(rest),
     });
-    return Array.isArray(wire) ? wire.map(fromWireWarehouseSnake) : [];
+    const { records, recordsTotal, recordsFiltered } = unwrapWireList(wire);
+    return {
+      warehouses: records.map(fromWireWarehouse),
+      ...(recordsTotal !== undefined ? { recordsTotal } : {}),
+      ...(recordsFiltered !== undefined ? { recordsFiltered } : {}),
+    };
   }
 
   /**
@@ -167,6 +200,6 @@ export class WarehousesResource {
       retryable: false,
       ...toRequestFields(options),
     });
-    return fromWireWarehousePascal(wire ?? {});
+    return fromWireWarehouse(wire ?? {});
   }
 }

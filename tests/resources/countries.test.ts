@@ -4,7 +4,51 @@ import { makeHttp, sentUrl } from '../helpers/http';
 import { sequenceFetch, jsonResponse } from '../helpers/mockFetch';
 
 describe('CountriesResource', () => {
-  it('list maps snake_case countries to camelCase', async () => {
+  // Live 2026-07-30: GET /Country/GetAllCountry answers in PascalCase, unlike GetById.
+  it('list maps the live PascalCase GetAllCountry entity', async () => {
+    const mock = sequenceFetch(
+      jsonResponse([
+        {
+          AllowsBilling: true,
+          AllowsShipping: true,
+          CurrencyCode: 'LBP',
+          DisplayOrder: 1,
+          HSCodeFormat: null,
+          HSCodeFormatId: 0,
+          Id: 125,
+          LimitedToStores: false,
+          Name: 'Lebanon',
+          NumericIsoCode: 422,
+          PhoneCode: '961',
+          Published: true,
+          RequiredNationalShortAddress: false,
+          RequiredZipCode: false,
+          Terms: null,
+          ThreeLetterIsoCode: 'LBN',
+          TwoLetterIsoCode: 'LB',
+        },
+      ])
+    );
+    const countries = new CountriesResource(makeHttp(mock));
+    const result = await countries.list();
+    expect(sentUrl(mock)).toBe('https://test.icarry.com/api-frontend/Country/GetAllCountry');
+    expect(result[0]).toEqual({
+      name: 'Lebanon',
+      id: 125,
+      allowsBilling: true,
+      allowsShipping: true,
+      currencyCode: 'LBP',
+      displayOrder: 1,
+      limitedToStores: false,
+      numericIsoCode: 422,
+      published: true,
+      requiredZipCode: false,
+      threeLetterIsoCode: 'LBN',
+      twoLetterIsoCode: 'LB',
+    });
+  });
+
+  it('list still maps snake_case countries if the endpoint changes casing', async () => {
     const mock = sequenceFetch(
       jsonResponse([
         {
@@ -18,7 +62,6 @@ describe('CountriesResource', () => {
     );
     const countries = new CountriesResource(makeHttp(mock));
     const result = await countries.list();
-    expect(sentUrl(mock)).toBe('https://test.icarry.com/api-frontend/Country/GetAllCountry');
     expect(result[0]).toEqual({
       name: 'Lebanon',
       allowsShipping: true,
@@ -28,12 +71,48 @@ describe('CountriesResource', () => {
     });
   });
 
-  it('getById maps a single country', async () => {
-    const mock = sequenceFetch(jsonResponse({ name: 'UAE', id: 234, allows_billing: true }));
+  // Live 2026-07-30: GET /Country/GetById/{id} answers in snake_case, unlike GetAllCountry.
+  it('getById maps the live snake_case entity', async () => {
+    const mock = sequenceFetch(
+      jsonResponse({
+        allows_billing: true,
+        allows_shipping: true,
+        display_order: 1,
+        id: 125,
+        limited_to_stores: false,
+        name: 'Lebanon',
+        numeric_iso_code: 422,
+        published: true,
+        required_zip_code: false,
+        three_letter_iso_code: 'LBN',
+        two_letter_iso_code: 'LB',
+      })
+    );
+    const countries = new CountriesResource(makeHttp(mock));
+    const result = await countries.getById(125);
+    expect(sentUrl(mock)).toBe('https://test.icarry.com/api-frontend/Country/GetById/125');
+    expect(result).toEqual({
+      name: 'Lebanon',
+      id: 125,
+      allowsBilling: true,
+      allowsShipping: true,
+      displayOrder: 1,
+      limitedToStores: false,
+      numericIsoCode: 422,
+      published: true,
+      requiredZipCode: false,
+      threeLetterIsoCode: 'LBN',
+      twoLetterIsoCode: 'LB',
+    });
+    // GetById does not carry a currency; the field must stay absent rather than empty.
+    expect(result.currencyCode).toBeUndefined();
+  });
+
+  it('getById maps a PascalCase country if that endpoint changes casing', async () => {
+    const mock = sequenceFetch(jsonResponse({ Name: 'UAE', Id: 234, AllowsBilling: true }));
     const countries = new CountriesResource(makeHttp(mock));
     const result = await countries.getById(234);
-    expect(sentUrl(mock)).toBe('https://test.icarry.com/api-frontend/Country/GetById/234');
-    expect(result.allowsBilling).toBe(true);
+    expect(result).toEqual({ name: 'UAE', id: 234, allowsBilling: true });
   });
 
   it('listStates sends the boolean addSelectStateItem query and preserves custom_properties', async () => {

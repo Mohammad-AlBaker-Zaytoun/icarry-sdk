@@ -6,6 +6,8 @@
  * array without narrowing. If the ambiguous result types are ever wrongly re-narrowed to an
  * object, those directives become unused and `tsc` fails.
  */
+import { parseMarketplaceRates, toMarketplaceOrderFields } from '../../src';
+import type { MarketplaceRateOption, MarketplaceCreateOrderInput } from '../../src';
 import type {
   AmbiguousApiResult,
   MerchantRateResult,
@@ -49,6 +51,27 @@ export const assignable: AmbiguousApiResult[] = [
 export const asString: string = typeof result === 'string' ? result : '';
 // An undefined (empty) result is representable.
 export const isEmpty: boolean = result === undefined;
+
+// --- Opt-in structuring must NOT narrow the method's return type ---
+
+declare const rateResult: MarketplaceRateResult;
+
+/** The parser is the only way to get structure; it accepts the un-narrowed result directly. */
+export const parsed: MarketplaceRateOption[] = parseMarketplaceRates(rateResult);
+/** `rate` is the numeric field; `formattedPrice` is a display string and cannot stand in. */
+export const numericRate: number[] = parsed.map((option) => option.rate);
+export const displayPrices: Array<string | undefined> = parsed.map((o) => o.formattedPrice);
+/** The projection lines up with `createOrder`'s input exactly. */
+export const orderFields: Pick<
+  MarketplaceCreateOrderInput,
+  'provider' | 'methodId' | 'price' | 'methodDescription'
+>[] = parsed.map(toMarketplaceOrderFields);
+
+// @ts-expect-error a rate option's numeric `rate` is not a formatted string
+export const badRate: string = parsed[0]!.rate;
+
+// @ts-expect-error the option models no bare `price` — callers must choose rate/formattedPrice
+export const badPrice = parsed[0]!.price;
 
 // --- The following MUST NOT compile (assuming an object shape without narrowing) ---
 

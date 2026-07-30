@@ -59,6 +59,7 @@ export type {
   MarketplaceWarehouseAddress,
   CreateMarketplaceWarehouseInput,
   ListWarehousesOptions,
+  WarehouseListPage,
 } from './resources/warehouses';
 export type {
   CountriesResource,
@@ -82,6 +83,7 @@ export type {
   MarketplaceCreateOrderInput,
   MarketplaceRateResult,
   MarketplaceOrderResult,
+  MarketplaceRateOption,
 } from './resources/marketplace';
 export type {
   OnDemandResource,
@@ -107,3 +109,8 @@ export type {
   CancelResult,
   PackagingSlip,
 } from './resources/shipments';
+
+// ---- Optional response helpers (values) ------------------------------------
+// Local, non-throwing readers for responses whose schema is provisional. They structure a
+// result without narrowing any method's return type — see API_COVERAGE.md.
+export { parseMarketplaceRates, toMarketplaceOrderFields } from './resources/marketplace';

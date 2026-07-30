@@ -77,10 +77,16 @@ describe.skipIf(!ready)('live contract (read-only)', () => {
     if (states.length > 0) reportShape('state[0]', states[0]);
   });
 
-  it('lists warehouses', async () => {
-    const warehouses = await liveClient().warehouses.list();
-    expect(Array.isArray(warehouses)).toBe(true);
-    if (warehouses.length > 0) reportShape('warehouse[0]', warehouses[0]);
+  it('lists warehouses out of the DataTables envelope', async () => {
+    const page = await liveClient().warehouses.listWithMeta();
+    expect(Array.isArray(page.warehouses)).toBe(true);
+    reportShape('warehouses.listWithMeta', page);
+    // GetAll wraps its records in `{ Data, recordsTotal, … }`; if the counters are missing the
+    // endpoint went back to a bare array and the envelope handling needs revisiting.
+    if (page.warehouses.length > 0) {
+      expect(typeof page.recordsTotal).toBe('number');
+      reportShape('warehouse[0]', page.warehouses[0]);
+    }
   });
 
   it.skipIf(!warehouseId)('looks up a warehouse by id', async () => {

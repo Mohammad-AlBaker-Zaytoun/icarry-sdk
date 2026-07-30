@@ -39,6 +39,75 @@ export function toRequestFields(options: RequestOptions): RequestFields {
   return out;
 }
 
+/**
+ * Reads the first present value among several wire spellings of the same field.
+ *
+ * iCarry is not consistent about response casing: several entities come back **PascalCase**
+ * from their `GetAll` route and **snake_case** from `GetById` (verified live 2026-07-30 —
+ * see API_COVERAGE.md). Mappers therefore read every casing the endpoint may legitimately
+ * return instead of betting on one casing per method, so a change on either route degrades
+ * to a missing optional field rather than `{ name: '', id: NaN }`.
+ *
+ * Only own properties are considered, so a key like `constructor` can never resolve to
+ * something off `Object.prototype`.
+ */
+export function readWireField(wire: Record<string, unknown>, ...keys: string[]): unknown {
+  if (!wire || typeof wire !== 'object') {
+    return undefined;
+  }
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(wire, key)) {
+      const value = wire[key];
+      if (value !== undefined) {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+function onlyRecords(values: unknown[]): Array<Record<string, unknown>> {
+  return values.filter(
+    (value): value is Record<string, unknown> =>
+      !!value && typeof value === 'object' && !Array.isArray(value)
+  );
+}
+
+/** A list response unwrapped from iCarry's DataTables envelope (or from a bare array). */
+export interface WireListEnvelope {
+  records: Array<Record<string, unknown>>;
+  recordsTotal?: number;
+  recordsFiltered?: number;
+}
+
+/**
+ * Unwraps iCarry's DataTables-style list envelope
+ * (`{ Data, draw, recordsFiltered, recordsTotal, … }`), while still accepting a bare array in
+ * case the endpoint's shape changes. Anything else yields no records rather than throwing —
+ * the transport already rejects non-JSON bodies. Non-object entries are dropped so junk in
+ * the array can never surface as a half-empty entity.
+ */
+export function unwrapWireList(wire: unknown): WireListEnvelope {
+  if (Array.isArray(wire)) {
+    return { records: onlyRecords(wire) };
+  }
+  if (!wire || typeof wire !== 'object') {
+    return { records: [] };
+  }
+  const envelope = wire as Record<string, unknown>;
+  const data = readWireField(envelope, 'Data', 'data');
+  const out: WireListEnvelope = { records: Array.isArray(data) ? onlyRecords(data) : [] };
+  const total = readWireField(envelope, 'recordsTotal', 'RecordsTotal');
+  const filtered = readWireField(envelope, 'recordsFiltered', 'RecordsFiltered');
+  if (typeof total === 'number' && Number.isFinite(total)) {
+    out.recordsTotal = total;
+  }
+  if (typeof filtered === 'number' && Number.isFinite(filtered)) {
+    out.recordsFiltered = filtered;
+  }
+  return out;
+}
+
 /** Removes keys whose value is `undefined`, so the SDK never emits an unset field. */
 export function omitUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

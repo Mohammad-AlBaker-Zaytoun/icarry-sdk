@@ -213,6 +213,34 @@ const rates = await icarry.marketplace.estimateRates({ pickupLocation: 'Main War
 const order = await icarry.marketplace.createOrder({ pickupLocation: 'Main Warehouse', /* ...merchant order fields */ });
 ```
 
+### Reading marketplace rates (opt-in)
+
+`estimateRates` returns `AmbiguousApiResult`, because iCarry's documented example is empty. A live
+call returns an array of rate options, so the SDK ships an **opt-in** reader rather than narrowing
+the return type on one observation:
+
+```typescript
+import { parseMarketplaceRates, toMarketplaceOrderFields } from 'icarry-sdk';
+
+const result = await icarry.marketplace.estimateRates(rateInput);
+const options = parseMarketplaceRates(result); // MarketplaceRateOption[]
+
+const cheapest = [...options].sort((a, b) => a.rate - b.rate)[0];
+if (cheapest) {
+  await icarry.marketplace.createOrder({ ...orderInput, ...toMarketplaceOrderFields(cheapest) });
+}
+```
+
+`toMarketplaceOrderFields` fills `provider`, `methodId`, `methodDescription`, and `price` from one
+option. **`rate` vs `formattedPrice`:** the wire sends both a numeric `Rate` (`2.121`) and a
+formatted `Price` string (`"$2.12"`); the option exposes them as `rate: number` and
+`formattedPrice?: string` — display the second, send the first. Every field is on `raw` too.
+
+`parseMarketplaceRates` never throws and never calls the API. It returns `[]` for any shape it does
+not recognize, so treat an empty array as "no rates **or** unfamiliar response" and fall back to
+reading `result` yourself. Merchant and on-demand rate responses have no equivalent helper — they
+have not been observed live. See [`API_COVERAGE.md`](./API_COVERAGE.md#provisional-marketplace-rate-options).
+
 ## On-demand flow
 
 A **different** model: country/state **ids**, `From`/`To` coordinates, and a nested `dimensions`
@@ -312,7 +340,7 @@ Conservative and structural. Only **side-effect-free, opted-in** calls are ever 
 transient failures (network errors, `408`, `429`, and selected `5xx`), with bounded exponential
 backoff + full jitter and `Retry-After` support.
 
-- Read-only GETs (`countries.*`, `warehouses.getById`/`list`, `shipments.track`, `getPackagingSlip`)
+- Read-only GETs (`countries.*`, `warehouses.getById`/`list`/`listWithMeta`, `shipments.track`, `getPackagingSlip`)
   are retried by default.
 - Rate estimates (`*.estimateRates`) are **not** retried unless you pass `{ retry: true }` per call.
 - **Never retried:** order creation, shipment creation, all payment operations, MontyPay returns,
@@ -426,6 +454,27 @@ quirks it handles for you:
 | `shipments.cancel` | `GET /CancelOrder` | Mutating `GET`. |
 | `payments.createShipmentOrder` | card in query string | Server-only; redacted. |
 | `getPackagingSlip` | "Pdf" endpoint | May return binary **or** JSON. |
+| `countries.list` / `getById` | `PascalCase` vs `snake_case` | Same entity, **different casing per route** (see below). |
+| `warehouses.list` | `{ Data, recordsTotal, … }` | `GetAll` returns a DataTables envelope, not an array. |
+
+**Casing split (live-verified 2026-07-30).** iCarry serves the same entity in different casings
+depending on the route: `Country/GetAllCountry` and `Warehouse/GetAll` answer in **PascalCase**,
+while `Country/GetById`, `Country/GetStatesByCountryId` and `Warehouse/GetById` answer in
+snake_case. The SDK's mappers read **both** spellings per field, so you get one stable camelCase
+shape either way. `currencyCode` on `Country` is only sent by `countries.list()` — it is absent from
+`countries.getById()`.
+
+**Warehouse list envelope.** `Warehouse/GetAll` wraps its records in a DataTables envelope.
+`warehouses.list()` unwraps it for you; use `listWithMeta()` when you also want the counters:
+
+```typescript
+const warehouses = await icarry.warehouses.list({ name: 'Baabda' }); // Warehouse[]
+
+const page = await icarry.warehouses.listWithMeta({ name: 'Baabda' });
+page.warehouses; // Warehouse[]
+page.recordsTotal; // total before the name filter (undefined if a bare array came back)
+page.recordsFiltered; // records matching the name filter — the filter is applied server-side
+```
 
 Additionally: response schemas for create/rate/track/confirm/MontyPay are **unverified** (iCarry's
 "examples" are auto-generated echoes of the request), so they are returned as open records; error

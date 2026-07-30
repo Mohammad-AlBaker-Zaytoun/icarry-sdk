@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   omitUndefined,
+  readWireField,
+  unwrapWireList,
   toWireParcel,
   toWireDimensions,
   toWireDimensionsWithUnit,
@@ -21,6 +23,36 @@ import { ICarryValidationError } from '../../src/errors';
 describe('_shared wire builders', () => {
   it('omitUndefined drops undefined keys only', () => {
     expect(omitUndefined({ a: 1, b: undefined, c: null, d: 0 })).toEqual({ a: 1, c: null, d: 0 });
+  });
+
+  it('readWireField takes the first present spelling and tolerates junk input', () => {
+    expect(readWireField({ Name: 'a', name: 'b' }, 'Name', 'name')).toBe('a');
+    expect(readWireField({ name: 'b' }, 'Name', 'name')).toBe('b');
+    expect(readWireField({ Name: undefined, name: 'b' }, 'Name', 'name')).toBe('b');
+    expect(readWireField({ Name: null }, 'Name', 'name')).toBeNull();
+    expect(readWireField({}, 'Name')).toBeUndefined();
+    expect(readWireField(null as unknown as Record<string, unknown>, 'Name')).toBeUndefined();
+  });
+
+  it('readWireField never resolves a key off Object.prototype', () => {
+    expect(readWireField({}, 'constructor', 'toString')).toBeUndefined();
+  });
+
+  it('unwrapWireList unwraps the DataTables envelope with its counters', () => {
+    expect(
+      unwrapWireList({ Data: [{ Id: 1 }], draw: 0, recordsTotal: 7, recordsFiltered: 1 })
+    ).toEqual({ records: [{ Id: 1 }], recordsTotal: 7, recordsFiltered: 1 });
+  });
+
+  it('unwrapWireList accepts a bare array and omits absent counters', () => {
+    expect(unwrapWireList([{ id: 1 }])).toEqual({ records: [{ id: 1 }] });
+  });
+
+  it('unwrapWireList drops non-object records and unusable bodies', () => {
+    expect(unwrapWireList({ Data: [null, 'x', [], { Id: 1 }] }).records).toEqual([{ Id: 1 }]);
+    expect(unwrapWireList({ Data: 'nope', recordsTotal: 'x' })).toEqual({ records: [] });
+    expect(unwrapWireList(null).records).toEqual([]);
+    expect(unwrapWireList('text').records).toEqual([]);
   });
 
   it('toWireParcel / toWireDimensions map fields', () => {

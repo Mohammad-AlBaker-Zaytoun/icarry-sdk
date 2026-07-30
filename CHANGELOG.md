@@ -6,6 +6,59 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.7] - Live-verified list contracts
+
+Two live-verified response-contract bugs fixed. Verified against the iCarry test tenant
+(`https://test.icarry.com`) on 2026-07-30 with customer-API credentials; read-only calls only.
+Backward compatible: no existing signature, type, or wire body changed.
+
+### Fixed
+
+- **`countries.list()` returned 249 objects of `{ name: '', id: NaN }`.** `GET
+  /Country/GetAllCountry` responds in **PascalCase**, but the country mapper read snake_case — the
+  casing `GET /Country/GetById/{id}` uses. Every field missed, so callers got empty names and `NaN`
+  ids. The mapper now reads **both** spellings per field, so it is correct for both routes and
+  survives iCarry flipping either one.
+- **`warehouses.list()` always returned `[]`.** `GET /Warehouse/GetAll` does not return an array; it
+  returns a DataTables-style envelope (`{ Data, draw, recordsFiltered, recordsTotal, … }`). The
+  `Array.isArray(wire) ? … : []` guard silently yielded an empty list for every caller. `list()` now
+  unwraps `Data` (still accepting a bare array), and the records inside — which are PascalCase, not
+  snake_case — map correctly via the same dual-casing mapper.
+
+### Added
+
+- **`warehouses.listWithMeta()`** returns `WarehouseListPage` — `warehouses` plus the envelope's
+  `recordsTotal` / `recordsFiltered` counters (both absent if a bare array comes back). `list()` is
+  unchanged in signature and returns `Warehouse[]`. `WarehouseListPage` is exported.
+- **`Country.currencyCode`**, mapped from `GetAllCountry`'s `CurrencyCode`. `GetById` does not send
+  a currency, so the field is absent on `countries.getById()` results. Other `GetAllCountry`-only
+  fields (`PhoneCode`, `HSCodeFormat`, `HSCodeFormatId`, `RequiredNationalShortAddress`, `Terms`)
+  remain unmodeled.
+- Regression tests using the **live key casings** as fixtures for both endpoints — the previous
+  tests used snake_case list fixtures, which is why CI stayed green while both endpoints were
+  broken against the real API.
+- **`parseMarketplaceRates(result)` and `toMarketplaceOrderFields(option)`**, with the
+  `MarketplaceRateOption` interface — an **opt-in** reading of the marketplace rate response.
+  `marketplace.estimateRates` still returns `AmbiguousApiResult`: the response has been seen live
+  exactly once, on one tenant, which the API_COVERAGE.md typing policy says is not enough to
+  narrow a return type. The parser is local, never throws, and returns `[]` for any shape it does
+  not recognize, so nothing about the method's contract changes.
+  `toMarketplaceOrderFields` maps an option onto `createOrder`'s `provider` / `methodId` /
+  `methodDescription` / `price`. The option deliberately exposes the wire's numeric `Rate` as
+  `rate: number` and its formatted `Price` string (`"$2.12"`) as `formattedPrice?: string`, with
+  **no bare `price`** — a currency-formatted string cannot reach `createOrder`'s numeric field by
+  accident. Unmodeled fields are preserved on `raw`. No equivalent exists for the merchant or
+  on-demand rate endpoints; those responses remain unobserved.
+
+### Changed
+
+- `API_COVERAGE.md`: `countries.list` and `warehouses.list` downgraded from **High** to **Med
+  (live-verified, with caveats)**; new sections document the GetAll-vs-GetById casing split and the
+  DataTables envelope; a live-verification table records what was confirmed on 2026-07-30. The
+  `AmbiguousApiResult` treatment of the rate/create/track endpoints is **unchanged** — those remain
+  genuinely unverified — and a new section documents the provisional marketplace rate-option shape
+  behind the opt-in parser.
+
 ## [0.1.6] - Release workflow and live-summary privacy
 
 A backward-compatible patch release. All 21 endpoint wrappers, iCarry wire casing/serialization,
@@ -433,7 +486,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.3...v0.1.4
