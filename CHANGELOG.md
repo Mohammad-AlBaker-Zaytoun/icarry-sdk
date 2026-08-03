@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.9] - Measured field sparsity
+
+Documentation only — **no behaviour, signature, type, or wire body changed**. Ships because the
+corrected text lives in the emitted `.d.ts`, where consumers read it in their editor.
+
+### Documentation
+
+- **Corrected the `phoneCode` docstring, which overstated availability.** It claimed the field was
+  "present on every country … all 238 records". The *key* is on all 238, but the *value* is `null`
+  on 148 — only **90 (38%)** carry a real dialling prefix (live 2026-08-03, `lb.icarry.com`). The
+  `null`s already mapped to an absent property in 0.1.8, so **behaviour is unchanged**; only the
+  comment was wrong. `terms` now carries its measured sparsity too: `null` on 213 of 238, real on
+  **25**, which means alias search can only ever match that minority — every other country is
+  reachable by `name` alone. `API_COVERAGE.md` updated to match.
+
 ## [0.1.8] - Country catalogue fields
 
 The five `GetAllCountry` fields that were previously documented as unmodeled are now on `Country`,
@@ -540,7 +555,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...v0.1.6

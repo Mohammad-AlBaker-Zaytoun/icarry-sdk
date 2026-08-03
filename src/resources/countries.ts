@@ -35,12 +35,17 @@ export interface Country {
    */
   currencyCode?: string;
   /**
-   * International dialling prefix, e.g. `"+961"`. Present on every country in the
-   * `GetAllCountry` response (live 2026-08-03, `lb.icarry.com`, all 238 records).
+   * International dialling prefix, e.g. `"+961"`.
    *
-   * The leading `+` is **not** guaranteed: an earlier capture (`test.icarry.com`, 2026-07-30)
-   * returned Lebanon as `"961"`. Normalize before display or dialling rather than assuming
-   * either form.
+   * **Sparse — do not rely on it being there.** `GetAllCountry` sends the `PhoneCode` *key* on
+   * all 238 countries, but its value is `null` on 148 of them; only **90 (38%)** carry a real
+   * prefix (live 2026-08-03, `lb.icarry.com`). The `null`s map to an absent property, so this
+   * field is undefined for the majority of countries. Anything phone-related must handle that
+   * for most of the list, not as an edge case.
+   *
+   * The leading `+` is **not** guaranteed either: an earlier capture (`test.icarry.com`,
+   * 2026-07-30) returned Lebanon as `"961"`. Normalize before display or dialling rather than
+   * assuming either form.
    *
    * Not observed on `GetById` — see {@link Country.currencyCode}.
    */
@@ -50,8 +55,10 @@ export interface Country {
    * a **trailing comma** — e.g. `"uae,الإمارات العربية المتحدة,émirats arabes unis,"`. Kept for
    * fidelity; use {@link Country.termAliases} for matching.
    *
-   * May be `null` on the wire (observed 2026-07-30), in which case this field is absent rather
-   * than the string `"null"`. Not observed on `GetById` — see {@link Country.currencyCode}.
+   * **Sparse.** `null` on 213 of 238 countries; only **25** carry aliases (live 2026-08-03,
+   * `lb.icarry.com`). A `null` maps to an absent property rather than the string `"null"`, so
+   * alias search only ever matches that minority — a country with no `Terms` is reachable only
+   * by its `name`. Not observed on `GetById` — see {@link Country.currencyCode}.
    */
   terms?: string;
   /**

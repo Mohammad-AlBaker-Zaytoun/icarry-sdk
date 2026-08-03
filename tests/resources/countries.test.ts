@@ -95,8 +95,9 @@ describe('CountriesResource', () => {
     expect(result[0]?.hsCodeFormatId).toBe(0);
   });
 
-  // Live 2026-08-03 (lb.icarry.com): all 238 countries carry PhoneCode/HSCodeFormat/
-  // HSCodeFormatId/RequiredNationalShortAddress; Terms is a comma-separated alias list.
+  // Live 2026-08-03 (lb.icarry.com): all 238 countries carry these keys, but PhoneCode and Terms
+  // are null on most of them (see the null test below). Saudi Arabia is one of the ~25 with real
+  // Terms, and the only country with RequiredNationalShortAddress: true.
   it('list maps the GetAllCountry-only catalogue fields', async () => {
     const mock = sequenceFetch(
       jsonResponse([

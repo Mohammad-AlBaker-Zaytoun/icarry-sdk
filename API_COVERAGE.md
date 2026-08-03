@@ -60,8 +60,8 @@ results:
 | Wire field (PascalCase) | `Country` property | Type | Live observation |
 |---|---|---|---|
 | `CurrencyCode` | `currencyCode` | `string` | ISO currency code. |
-| `PhoneCode` | `phoneCode` | `string` | Present on every country. `"+961"`, `"+1"`, `"+966"` on `lb.icarry.com` (2026-08-03) — but `"961"`, **without** the `+`, on `test.icarry.com` (2026-07-30). Do not assume the prefix. |
-| `Terms` | `terms` + `termAliases` | `string` + `readonly string[]` | Comma-separated multilingual search aliases with a **trailing comma**. Also observed `null`. See below. |
+| `PhoneCode` | `phoneCode` | `string` | **Sparse: `null` on 148 of 238; only 90 (38%) carry a value** (2026-08-03). `"+961"`, `"+1"`, `"+966"` on `lb.icarry.com` — but `"961"`, **without** the `+`, on `test.icarry.com` (2026-07-30). Do not assume presence or prefix. |
+| `Terms` | `terms` + `termAliases` | `string` + `readonly string[]` | **Sparse: `null` on 213 of 238; only 25 carry aliases** (2026-08-03). Comma-separated multilingual search aliases with a **trailing comma**. See below. |
 | `RequiredNationalShortAddress` | `requiresNationalShortAddress` | `boolean` | `true` for **Saudi Arabia only**; `false` for the other 237 (2026-08-03). |
 | `HSCodeFormat` | `hsCodeFormat` | `string` | `"TwelveDigits"` on all 238 records on `lb.icarry.com` (2026-08-03) — but `null` for Lebanon on `test.icarry.com` (2026-07-30). Not uniform across tenants. |
 | `HSCodeFormatId` | `hsCodeFormatId` | `number` | `0` on all 238 — no discriminating signal yet. |
