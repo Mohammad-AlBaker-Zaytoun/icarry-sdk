@@ -22,7 +22,7 @@
  * customer data — it records only value kinds and property names, never values.
  */
 import { describe, it, expect } from 'vitest';
-import { ICarryClient, type ICarryClientOptions } from '../../src';
+import { ICarryClient, type Country, type ICarryClientOptions } from '../../src';
 import { summarizeShape } from './shape';
 
 const enabled = process.env.ICARRY_LIVE_TESTS === 'true';
@@ -66,6 +66,33 @@ describe.skipIf(!ready)('live contract (read-only)', () => {
     const countries = await liveClient().countries.list();
     expect(Array.isArray(countries)).toBe(true);
     if (countries.length > 0) reportShape('countries[0]', countries[0]);
+  });
+
+  // `GetAllCountry` carries catalogue fields that the recorded `GetById` capture did not. The
+  // shape summarizer masks non-allowlisted keys, so it cannot answer *which* of them a route
+  // sends — this logs presence per field instead (booleans only, never a value), which is what
+  // re-confirming the asymmetry actually needs.
+  it('reports which catalogue fields each country route sends', async () => {
+    const client = liveClient();
+    const listed = await client.countries.list();
+    if (listed.length === 0) return;
+    const fetched = await client.countries.getById(listed[0]!.id);
+    const present = (country: Country): Record<string, boolean> => ({
+      currencyCode: country.currencyCode !== undefined,
+      phoneCode: country.phoneCode !== undefined,
+      terms: country.terms !== undefined,
+      requiresNationalShortAddress: country.requiresNationalShortAddress !== undefined,
+      hsCodeFormat: country.hsCodeFormat !== undefined,
+      hsCodeFormatId: country.hsCodeFormatId !== undefined,
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      '[live fields] countries.list[0]:',
+      JSON.stringify(present(listed[0]!)),
+      '| countries.getById:',
+      JSON.stringify(present(fetched))
+    );
+    expect(typeof fetched).toBe('object');
   });
 
   it('lists states for the first country', async () => {

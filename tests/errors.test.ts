@@ -61,7 +61,11 @@ describe('errors', () => {
   it('is throwable and catchable by base type', () => {
     expect(() => {
       throw new ICarryTimeoutError('t');
-    }).toThrow(ICarryError);
+    }).toThrow(ICarryTimeoutError);
+    // `ICarryError` is abstract, and vitest's `toThrow` signature rejects abstract constructors.
+    // Asserting the instanceof relationship directly is the same guarantee: a caught
+    // `ICarryTimeoutError` satisfies `catch (e) { if (e instanceof ICarryError) … }`.
+    expect(new ICarryTimeoutError('t')).toBeInstanceOf(ICarryError);
   });
 
   it('has a usable stack trace', () => {

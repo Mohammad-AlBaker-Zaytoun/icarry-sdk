@@ -276,8 +276,13 @@ describe('HttpClient — retry policy', () => {
 });
 
 describe('HttpClient — timeout & abort', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  // Braced so the hook returns void — vitest types a returned VitestUtils as a cleanup callback.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('raises ICarryTimeoutError when the timeout elapses', async () => {
     const client = makeClient({ fetch: hangingFetch(), timeoutMs: 1000 });

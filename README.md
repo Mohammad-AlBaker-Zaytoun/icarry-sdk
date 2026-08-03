@@ -461,8 +461,15 @@ quirks it handles for you:
 depending on the route: `Country/GetAllCountry` and `Warehouse/GetAll` answer in **PascalCase**,
 while `Country/GetById`, `Country/GetStatesByCountryId` and `Warehouse/GetById` answer in
 snake_case. The SDK's mappers read **both** spellings per field, so you get one stable camelCase
-shape either way. `currencyCode` on `Country` is only sent by `countries.list()` — it is absent from
-`countries.getById()`.
+shape either way. Six `Country` fields are only sent by `countries.list()` and are absent from
+`countries.getById()`: `currencyCode`, `phoneCode`, `terms`/`termAliases`,
+`requiresNationalShortAddress`, `hsCodeFormat` and `hsCodeFormatId`.
+
+**Country search aliases.** `Terms` arrives as a comma-separated, multilingual string with a
+trailing comma (`"uae,الإمارات العربية المتحدة,…,"`). `country.terms` is the raw string;
+`country.termAliases` is it split, trimmed and stripped of empty elements, so the trailing comma
+costs you nothing. Aliases are **not** lowercased — they contain Arabic, French, Spanish and emoji,
+so case folding is left to you.
 
 **Warehouse list envelope.** `Warehouse/GetAll` wraps its records in a DataTables envelope.
 `warehouses.list()` unwraps it for you; use `listWithMeta()` when you also want the counters:

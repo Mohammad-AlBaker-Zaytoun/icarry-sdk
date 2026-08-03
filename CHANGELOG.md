@@ -6,6 +6,60 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.8] - Country catalogue fields
+
+The five `GetAllCountry` fields that were previously documented as unmodeled are now on `Country`,
+with `Terms` exposed both raw and parsed. Verified live against `lb.icarry.com` on 2026-08-03 across
+all 238 countries; read-only calls only. Backward compatible: every new property is optional and no
+existing signature, type, or wire body changed.
+
+### Added
+
+- **The five remaining `GetAllCountry`-only fields are now modeled on `Country`**, verified live
+  against `lb.icarry.com` on 2026-08-03 across all 238 countries: `phoneCode` (`PhoneCode`),
+  `terms` (`Terms`), `requiresNationalShortAddress` (`RequiredNationalShortAddress`),
+  `hsCodeFormat` (`HSCodeFormat`) and `hsCodeFormatId` (`HSCodeFormatId`). All are optional and
+  read in both casings like every other `Country` field; the recorded `GetById` capture carries
+  none of them, so — as with `currencyCode` — expect them absent on `countries.getById()`.
+- **`Country.termAliases`**, `Terms` parsed for matching: split on `,`, trimmed, empty elements
+  dropped, so the wire's **trailing comma** does not yield a trailing `""`. The raw string stays
+  available as `Country.terms`. Aliases are **not** lowercased or normalized — they contain
+  Arabic, French, Spanish and emoji, and case folding is the consumer's decision.
+
+### Fixed
+
+- **An explicit `null` on any optional `Country` or `StateProvince` field now maps to an absent
+  property.** Previously `null` passed the `!== undefined` test and got coerced: a `null`
+  `CurrencyCode` became the string `"null"`, and a `null` `DisplayOrder` became `0`. `HSCodeFormat`
+  and `Terms` were both observed as `null` live on 2026-07-30, so this is a real wire shape, not a
+  hypothetical. All optional fields in the module now share one `isPresent` test.
+- The HS-code fields also read the alternate acronym spelling (`h_s_code_format`,
+  `h_s_code_format_id`) alongside `hs_code_format` / `hs_code_format_id`. `GetById` has never been
+  seen sending them, so the snake_case form is inferred rather than observed, and both plausible
+  serializations are accepted.
+
+### Notes
+
+- The two live captures disagree, which is why these fields are optional and loosely typed:
+  `test.icarry.com` (2026-07-30) returned 249 countries with Lebanon's `PhoneCode` as `"961"` and
+  `HSCodeFormat` as `null`; `lb.icarry.com` (2026-08-03) returned 238 with `"+961"` and
+  `"TwelveDigits"`. Neither the `+` prefix nor a populated HS-code format is a contract.
+- **No customs, HS-code or national-short-address field was added to any create-order input.** No
+  documented iCarry request body accepts one, so there is nowhere to send them; `HSCodeFormat` is
+  uniform across all 238 countries including domestic Lebanon and reads as catalogue metadata.
+  Whether a shipment to Saudi Arabia (the only country with
+  `RequiredNationalShortAddress: true`) or any customs-cleared destination is creatable through
+  the documented API is an **open question with iCarry** — see API_COVERAGE.md.
+
+### Internal
+
+- **`npm run typecheck:tests` now typechecks the test suite** and runs as part of `validate`. The
+  existing `typecheck` covers `src` only and `test:types` globs `**/*.types.ts`, so ordinary test
+  files were typechecked by nothing — vitest strips types without checking them. Enabling it
+  surfaced two latent type errors in existing tests (a `beforeEach` implicitly returning
+  `VitestUtils`, and `toThrow()` on the abstract `ICarryError`), both fixed. No shipped code
+  changed; `tests/` is not part of the published package.
+
 ## [0.1.7] - Live-verified list contracts
 
 Two live-verified response-contract bugs fixed. Verified against the iCarry test tenant
@@ -486,7 +540,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.4...v0.1.5
