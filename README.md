@@ -37,7 +37,7 @@ routes / Server Actions), Express, Fastify, Hono, or any modern JavaScript runti
 - [Installation](#installation) · [Runtime requirements](#runtime-requirements) · [Quick start](#quick-start)
 - [Configuration](#configuration) · [Authentication](#authentication) · [Base URL](#base-url)
 - [Merchant flow](#merchant-flow) · [Marketplace flow](#marketplace-flow) · [On-demand flow](#on-demand-flow)
-- [Tracking](#tracking) · [Cancellation](#cancellation) · [Packaging slips](#packaging-slips)
+- [Tracking](#tracking) · [Cancellation](#cancellation) · [Deleting a Created shipment](#deleting-a-created-shipment) · [Packaging slips](#packaging-slips)
 - [Error handling](#error-handling) · [Retry behavior](#retry-behavior) · [Timeouts & cancellation](#timeouts--cancellation)
 - [TypeScript usage](#typescript-usage) · [Security considerations](#security-considerations)
 - [⚠️ Server-only payment warning](#-server-only-payment-warning)
@@ -213,6 +213,38 @@ const rates = await icarry.marketplace.estimateRates({ pickupLocation: 'Main War
 const order = await icarry.marketplace.createOrder({ pickupLocation: 'Main Warehouse', /* ...merchant order fields */ });
 ```
 
+### Quoting by city name (no coordinates)
+
+On the marketplace rate call, `to` is **optional**. iCarry's docs mark the coordinates mandatory, but
+`lb.icarry.com` prices a body with no `ToLatitude`/`ToLongitude` from the carrier's own city name
+(observed 2026-10-15). Use a name exactly as `countries.listStates()` returns it, for both
+`dropOffLocation` and `dropAddress.city`. Leave `to` out rather than sending `(0, 0)` or a default
+city centre — those are invented destinations.
+
+```typescript
+import { isUnsupportedCityError } from 'icarry-sdk';
+
+try {
+  const result = await icarry.marketplace.estimateRates({
+    pickupLocation: 'Main Warehouse',
+    dropOffLocation: 'Beirut',
+    dropAddress: { countryCode: 'LB', city: 'Beirut' },
+    actualWeight: 0.4, packageType: 'Parcel', unit: 'cm',
+    dimensions: { length: 25, width: 20, height: 12 },          // required — see below
+    parcels: [{ quantity: 1, weight: 0.4, length: 25, width: 20, height: 12 }],
+  });
+} catch (error) {
+  if (isUnsupportedCityError(error)) {
+    // HTTP 404 "Unsupported City": the name is not in iCarry's state list. Don't retry.
+  }
+  throw error;
+}
+```
+
+`merchant.estimateRates` still requires `to`; its coordinate-free form has not been observed. Keep
+sending top-level `dimensions` either way: omitting the `Dimensions` object makes this tenant fail
+with HTTP 500 even when `ParcelDimensionsList` is present.
+
 ### Reading marketplace rates (opt-in)
 
 `estimateRates` returns `AmbiguousApiResult`, because iCarry's documented example is empty. A live
@@ -234,11 +266,15 @@ if (cheapest) {
 `toMarketplaceOrderFields` fills `provider`, `methodId`, `methodDescription`, and `price` from one
 option. **`rate` vs `formattedPrice`:** the wire sends both a numeric `Rate` (`2.121`) and a
 formatted `Price` string (`"$2.12"`); the option exposes them as `rate: number` and
-`formattedPrice?: string` — display the second, send the first. Every field is on `raw` too.
+`formattedPrice?: string` — display the second, send the first. `workingCurrency` is the currency
+code `rate` is in; live tenants send `WorkingCurrency` as an object (`{ CurrencyCode: "USD", … }`),
+and the reader accepts that or a bare string. Every field is on `raw` too.
 
 `parseMarketplaceRates` never throws and never calls the API. It returns `[]` for any shape it does
 not recognize, so treat an empty array as "no rates **or** unfamiliar response" and fall back to
-reading `result` yourself. Merchant and on-demand rate responses have no equivalent helper — they
+reading `result` yourself. A genuine empty list does happen: one tenant returned no options at all
+for parcels under its minimum chargeable weight (1 kg, August 2026) rather than quoting the minimum
+price. Merchant and on-demand rate responses have no equivalent helper — they
 have not been observed live. See [`API_COVERAGE.md`](./API_COVERAGE.md#provisional-marketplace-rate-options).
 
 ## On-demand flow
@@ -278,6 +314,24 @@ The tracking response shape is not documented by iCarry — it is parsed with `e
 typed as **`AmbiguousApiResult`** (it could be an object, array, string, etc.). Narrow it (e.g.
 `typeof result === 'object' && result !== null`) before reading fields.
 
+Two live replies have opt-in readers:
+
+```typescript
+import { isCreatedTrackingResult, isShipmentNotFoundError } from 'icarry-sdk';
+
+try {
+  const result = await icarry.shipments.track('TRACKING_NUMBER');
+  if (isCreatedTrackingResult(result)) {
+    // The bare string "Created": booked but not processed. Remove it with shipments.delete(id).
+  }
+} catch (error) {
+  if (isShipmentNotFoundError(error)) {
+    // "shipment … not exists" (or HTTP 404). Seen after a delete and after a portal cancellation —
+    // but absence is NOT proof of cancellation. Verify in the iCarry portal.
+  }
+}
+```
+
 ## Cancellation
 
 ```typescript
@@ -286,6 +340,28 @@ await icarry.shipments.cancel('TRACKING_NUMBER');
 
 > ⚠️ iCarry implements cancellation as a **mutating `GET`**. The SDK treats it as mutating: it is
 > never cached and never automatically retried.
+
+iCarry can refuse a cancellation with `"Cannot cancelled this order."` (sic). That is the carrier
+answering "no", not a transport failure — `isCancellationRejected(error)` tells them apart. Don't
+resend; check the shipment's state. A shipment still in `Created` state is deleted instead.
+
+## Deleting a Created shipment
+
+```typescript
+import { isCreatedTrackingResult, isShipmentDeleteSuccess } from 'icarry-sdk';
+
+if (isCreatedTrackingResult(await icarry.shipments.track(trackingNumber))) {
+  const reply = await icarry.shipments.delete(shipmentId); // POST /DeleteShipment/{shipmentId}
+  if (isShipmentDeleteSuccess(reply)) {
+    // "shipment Delete success". Re-check: track() should now fail with "… not exists".
+  }
+}
+```
+
+`DeleteShipment` is not in iCarry's published docs; the SDK models what live tenants do (2026-10). It
+takes the numeric **shipment id** (not the tracking number) and no body. It is mutating and never
+retried — after a timeout, re-check with `track()` instead of calling it again.
+`isShipmentDeleteSuccess` accepts only the observed success text; anything else returns `false`.
 
 ## Packaging slips
 
@@ -344,7 +420,7 @@ backoff + full jitter and `Retry-After` support.
   are retried by default.
 - Rate estimates (`*.estimateRates`) are **not** retried unless you pass `{ retry: true }` per call.
 - **Never retried:** order creation, shipment creation, all payment operations, MontyPay returns,
-  marketplace warehouse creation, and `shipments.cancel` (a mutating GET).
+  marketplace warehouse creation, `shipments.cancel` (a mutating GET), and `shipments.delete`.
 
 Disable retries entirely with `retry: false`.
 
@@ -436,7 +512,7 @@ none) — never treat a return call as proof of payment; verify status server-si
 
 See [`API_COVERAGE.md`](./API_COVERAGE.md) for the full matrix (method · route · auth · retry class ·
 sensitive-data class · documentation confidence · known ambiguity). All 21 documented routes are
-implemented. The plugin sections (Shopify/WooCommerce/Magento/OpenCart/MANSATI) are prose in iCarry's
+implemented, plus the undocumented `DeleteShipment` route observed in live use. The plugin sections (Shopify/WooCommerce/Magento/OpenCart/MANSATI) are prose in iCarry's
 docs, not callable REST routes, and are intentionally **not** implemented.
 
 ## Known iCarry inconsistencies
@@ -452,6 +528,10 @@ quirks it handles for you:
 | `methodId` (merchant/marketplace) | `MethodId` | Same concept, different name… |
 | `methodName` (on-demand) | `MethodName` | …than here. |
 | `shipments.cancel` | `GET /CancelOrder` | Mutating `GET`. |
+| `shipments.delete` | `POST /DeleteShipment/{id}` | Undocumented; for `Created` shipments only. |
+| `shipments.track` (Created) | `"Created"` | A bare string, not an object. |
+| `parseMarketplaceRates` → `workingCurrency` | `WorkingCurrency: { CurrencyCode }` | An object on live tenants. |
+| `countries.listStates` (Lebanon) | duplicate names | `Adma` and `Saida` each appear twice under different ids; returned as-is. |
 | `payments.createShipmentOrder` | card in query string | Server-only; redacted. |
 | `getPackagingSlip` | "Pdf" endpoint | May return binary **or** JSON. |
 | `countries.list` / `getById` | `PascalCase` vs `snake_case` | Same entity, **different casing per route** (see below). |

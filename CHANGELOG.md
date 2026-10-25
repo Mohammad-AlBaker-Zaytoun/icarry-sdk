@@ -6,6 +6,46 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.10] - Live findings from a production integration
+
+Fixes and additions from running the SDK in production against `lb.icarry.com` (October 2026).
+Backward compatible: one input field became optional, everything else is new and opt-in; no result
+type was narrowed and no existing wire body changed.
+
+### Fixed
+
+- **`parseMarketplaceRates()` dropped the currency on live responses.** Live tenants send
+  `WorkingCurrency` as an object (`{ CurrencyCode: "USD", Name: "US Dollar", … }`), but the reader only
+  accepted a string, so `workingCurrency` was always `undefined`. It now reads the code from either
+  form; `codCurrency` gets the same treatment. Anything else still yields `undefined`, and the original
+  value stays on `raw`.
+
+### Added
+
+- **City-name marketplace quotes: `MarketplaceRateInput.to` is now optional.** `lb.icarry.com` prices
+  `EstimateRatesForMarketplace` without `ToLatitude`/`ToLongitude` when the destination is an iCarry
+  city name, despite the docs marking coordinates mandatory. Omitting `to` now leaves both keys out of
+  the body (never `0`/`null`) instead of forcing callers to invent a point. A supplied `to` is
+  validated and sent exactly as before. `MerchantRateInput.to` stays required (unobserved there).
+- **`shipments.delete(shipmentId)`** → `POST /SmartwareShipment/DeleteShipment/{shipmentId}`, no body.
+  Undocumented by iCarry; it is how live tenants remove a shipment still in `Created` state, which
+  `cancel()` does not handle. Mutating — never retried. Returns `DeleteShipmentResult`
+  (`AmbiguousApiResult`). A string id is trimmed before it goes into the path.
+- **Opt-in, non-throwing reply readers** that recognise exactly the observed forms:
+  - `isCreatedTrackingResult(result)` — `track()` returned the bare string `"Created"`.
+  - `isShipmentDeleteSuccess(result)` — `delete()` returned `"shipment Delete success"` (only that).
+  - `isShipmentNotFoundError(error)` — an `ICarryApiError` reading "shipment … not exists", or HTTP 404.
+    Documented as **not** proof of cancellation.
+  - `isCancellationRejected(errorOrResult)` — iCarry refused a cancel (`"Cannot cancelled this order."`).
+  - `isUnsupportedCityError(error)` — a rate call failed with 404 `Unsupported City`.
+
+### Documentation
+
+- `API_COVERAGE.md` gains a **Live observations (2026-10)** section: city-name quoting, HTTP 500 when
+  `Dimensions` is omitted, the sub-1 kg empty rate list seen in August, the shipment replies above, and
+  Lebanon's duplicated `Adma`/`Saida` state entries (returned verbatim). New `DeleteShipment` row.
+- README: city-name quoting, tracking/cancellation readers, and a "Deleting a Created shipment" section.
+
 ## [0.1.9] - Measured field sparsity
 
 Documentation only — **no behaviour, signature, type, or wire body changed**. Ships because the

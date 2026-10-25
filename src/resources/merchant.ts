@@ -131,13 +131,27 @@ export function toWireMerchantAddress(a: MerchantAddress): Record<string, unknow
   });
 }
 
-/** Serializes {@link MerchantRateInput} to the exact wire body. */
-export function toWireMerchantRate(input: MerchantRateInput): Record<string, unknown> {
+/**
+ * The merchant rate model with the recipient point optional. Shared by the merchant and
+ * marketplace serializers; only the marketplace endpoint has been observed accepting a body
+ * without `ToLatitude`/`ToLongitude`, so only {@link MarketplaceRateInput} exposes it.
+ *
+ * @internal
+ */
+export type RateBodyInput = Omit<MerchantRateInput, 'to'> & { to?: GeoPoint };
+
+/**
+ * Serializes the shared rate model. When `to` is absent the `ToLongitude`/`ToLatitude` keys are
+ * **omitted** — never sent as `0`/`null` — so no invented coordinate can reach the carrier.
+ *
+ * @internal
+ */
+export function toWireRateBody(input: RateBodyInput): Record<string, unknown> {
   return omitUndefined({
     CODAmount: input.cod?.amount,
     COdCurrency: input.cod?.currency, // deliberate wire misspelling
     DropOffLocation: input.dropOffLocation,
-    ...toWireGeo('To', input.to),
+    ...(input.to !== undefined ? toWireGeo('To', input.to) : {}),
     ActualWeight: input.actualWeight,
     Dimensions: omitUndefined({ ...toWireDimensions(input.dimensions), Unit: input.unit }),
     PackageType: input.packageType,
@@ -145,6 +159,11 @@ export function toWireMerchantRate(input: MerchantRateInput): Record<string, unk
     ParcelDimensionsList: input.parcels.map(toWireParcel),
     ZipPostCode: input.zipPostCode,
   });
+}
+
+/** Serializes {@link MerchantRateInput} to the exact wire body. */
+export function toWireMerchantRate(input: MerchantRateInput): Record<string, unknown> {
+  return toWireRateBody(input);
 }
 
 /** Serializes {@link MerchantCreateOrderInput} to the exact wire body (uses `MethodId`). */
@@ -176,8 +195,20 @@ export function toWireMerchantCreateOrder(
 }
 
 export function validateMerchantRate(input: MerchantRateInput): void {
+  validateRateBody(input, { requireTo: true });
+}
+
+/**
+ * Validates the shared rate model. `to` is validated whenever present; it is required only
+ * when `requireTo` is set (the merchant endpoint, whose coordinate-free form is unobserved).
+ *
+ * @internal
+ */
+export function validateRateBody(input: RateBodyInput, opts: { requireTo: boolean }): void {
   requireNonEmptyString(input.dropOffLocation, 'dropOffLocation');
-  validateGeoPoint(input.to, 'to');
+  if (opts.requireTo || input.to !== undefined) {
+    validateGeoPoint(input.to as GeoPoint, 'to');
+  }
   requirePositiveMeasure(input.actualWeight, 'actualWeight');
   requireNonEmptyString(input.packageType, 'packageType');
   validateDimensions(input.dimensions, 'dimensions');

@@ -7,7 +7,12 @@
  * object, those directives become unused and `tsc` fails.
  */
 import { parseMarketplaceRates, toMarketplaceOrderFields } from '../../src';
-import type { MarketplaceRateOption, MarketplaceCreateOrderInput } from '../../src';
+import type {
+  MarketplaceRateOption,
+  MarketplaceCreateOrderInput,
+  MarketplaceRateInput,
+  MerchantRateInput,
+} from '../../src';
 import type {
   AmbiguousApiResult,
   MerchantRateResult,
@@ -18,6 +23,7 @@ import type {
   OnDemandShipmentResult,
   TrackingResult,
   CancelResult,
+  DeleteShipmentResult,
   PaymentResult,
 } from '../../src';
 
@@ -44,6 +50,7 @@ export const assignable: AmbiguousApiResult[] = [
   null as unknown as OnDemandShipmentResult,
   null as unknown as TrackingResult,
   null as unknown as CancelResult,
+  null as unknown as DeleteShipmentResult,
   null as unknown as PaymentResult,
 ];
 
@@ -83,3 +90,24 @@ export const bad2 = result.map((x: unknown) => x);
 
 // @ts-expect-error property access without narrowing is unsafe
 export const bad3 = result.length;
+
+// --- Coordinates: optional on the marketplace rate model only ---
+
+declare const deleteResult: DeleteShipmentResult;
+// @ts-expect-error — the delete reply is ambiguous (observed as bare text) and is not an object.
+export const deleteKey: unknown = deleteResult.message;
+
+const cityOnlyRate = {
+  pickupLocation: 'MyWarehouse',
+  dropOffLocation: 'Beirut',
+  actualWeight: 1,
+  packageType: 'parcel',
+  dimensions: { length: 1, width: 1, height: 1 },
+  dropAddress: { countryCode: 'LB', city: 'Beirut' },
+  parcels: [{ quantity: 1, weight: 1, length: 1, width: 1, height: 1 }],
+};
+
+/** A city-name marketplace quote needs no `to`. */
+export const marketplaceCityOnly: MarketplaceRateInput = cityOnlyRate;
+// @ts-expect-error — the merchant endpoint still requires recipient coordinates.
+export const merchantCityOnly: MerchantRateInput = cityOnlyRate;

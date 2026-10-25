@@ -7,7 +7,7 @@
 import type { RetryPolicy } from './types';
 
 /** SDK version, mirrored into the default `User-Agent`. Keep in sync with package.json. */
-export const SDK_VERSION = '0.1.9';
+export const SDK_VERSION = '0.1.10';
 
 /**
  * The API path segment iCarry mounts every route under. The client appends this to the
@@ -72,5 +72,6 @@ export const ENDPOINTS = {
 
   orderTracking: '/SmartwareShipment/orderTracking',
   cancelOrder: '/SmartwareShipment/CancelOrder',
+  deleteShipment: '/SmartwareShipment/DeleteShipment',
   pdfPackagingSlip: '/SmartwareShipment/PdfPackagingSlip',
 } as const;
