@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   MarketplaceResource,
+  isUnsupportedCityError,
   parseMarketplaceRates,
   toMarketplaceOrderFields,
   toWireMarketplaceRate,
   toWireMarketplaceCreateOrder,
 } from '../../src/resources/marketplace';
 import { makeHttp, sentBody, sentUrl } from '../helpers/http';
-import { sequenceFetch, jsonResponse } from '../helpers/mockFetch';
+import { sequenceFetch, jsonResponse, stringError } from '../helpers/mockFetch';
+import { ICarryApiError, ICarryValidationError } from '../../src/errors';
 import { FAKE_GEO, FAKE_PARCEL, FAKE_MERCHANT_ADDRESS } from '../helpers/fixtures';
 
 const rateInput = {
@@ -188,5 +190,96 @@ describe('MarketplaceResource', () => {
     expect(sentUrl(mock)).toBe(
       'https://test.icarry.com/api-frontend/SmartwareShipment/CreateOrderForMarketPlace'
     );
+  });
+});
+
+describe('marketplace city-name quoting (no coordinates)', () => {
+  const { to, ...cityOnly } = rateInput;
+
+  it('omits ToLatitude/ToLongitude entirely when `to` is not given', () => {
+    const body = toWireMarketplaceRate({ ...cityOnly, unit: 'cm' });
+    expect(body).not.toHaveProperty('ToLatitude');
+    expect(body).not.toHaveProperty('ToLongitude');
+    // The exact body priced live on lb.icarry.com (2026-10-15), values synthetic.
+    expect(body).toEqual({
+      pickupLocation: 'MyWarehouse',
+      CODAmount: 2,
+      COdCurrency: 'USD',
+      DropOffLocation: 'Beirut',
+      ActualWeight: 1,
+      Dimensions: { Length: 2, Width: 2, Height: 2, Unit: 'cm' },
+      PackageType: 'parcel',
+      DropAddress: { CountryCode: 'LB', City: 'Beirut' },
+      ParcelDimensionsList: [
+        {
+          Quantity: FAKE_PARCEL.quantity,
+          Weight: FAKE_PARCEL.weight,
+          Length: FAKE_PARCEL.length,
+          Width: FAKE_PARCEL.width,
+          Height: FAKE_PARCEL.height,
+        },
+      ],
+    });
+  });
+
+  it('still sends coordinates exactly as before when `to` is given', () => {
+    const body = toWireMarketplaceRate(rateInput);
+    expect(body.ToLatitude).toBe(FAKE_GEO.latitude);
+    expect(body.ToLongitude).toBe(FAKE_GEO.longitude);
+  });
+
+  it('estimateRates accepts a city-only input and sends no coordinates', async () => {
+    const mock = sequenceFetch(jsonResponse([liveRateOption]));
+    const marketplace = new MarketplaceResource(makeHttp(mock));
+    const result = await marketplace.estimateRates(cityOnly);
+    expect(parseMarketplaceRates(result)).toHaveLength(1);
+    expect(sentBody(mock)).not.toHaveProperty('ToLatitude');
+    expect(sentBody(mock)).not.toHaveProperty('ToLongitude');
+  });
+
+  it('still validates `to` when it is supplied', async () => {
+    const mock = sequenceFetch(jsonResponse([]));
+    const marketplace = new MarketplaceResource(makeHttp(mock));
+    await expect(
+      marketplace.estimateRates({ ...rateInput, to: { latitude: 200, longitude: 0 } })
+    ).rejects.toBeInstanceOf(ICarryValidationError);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it('isUnsupportedCityError recognises the carrier rejecting an unknown city name', async () => {
+    const mock = sequenceFetch(stringError(404, 'Unsupported City'), stringError(400, 'Bad'));
+    const marketplace = new MarketplaceResource(makeHttp(mock));
+    const unsupported = await marketplace.estimateRates(cityOnly).catch((e: unknown) => e);
+    const other = await marketplace.estimateRates(cityOnly).catch((e: unknown) => e);
+    expect(unsupported).toBeInstanceOf(ICarryApiError);
+    expect(isUnsupportedCityError(unsupported)).toBe(true);
+    expect(isUnsupportedCityError(other)).toBe(false);
+    expect(isUnsupportedCityError(new Error('Unsupported City'))).toBe(false);
+    expect(isUnsupportedCityError('Unsupported City')).toBe(false);
+  });
+});
+
+describe('parseMarketplaceRates currency objects', () => {
+  it('reads WorkingCurrency sent as a currency object (the live lb.icarry.com form)', () => {
+    const [option] = parseMarketplaceRates([
+      { ...liveRateOption, WorkingCurrency: { CurrencyCode: 'USD', Name: 'US Dollar' } },
+    ]);
+    expect(option?.workingCurrency).toBe('USD');
+    expect(option?.raw.WorkingCurrency).toEqual({ CurrencyCode: 'USD', Name: 'US Dollar' });
+  });
+
+  it('reads CODCurrency in either form too', () => {
+    const [option] = parseMarketplaceRates([
+      { ...liveRateOption, CODCurrency: { CurrencyCode: 'USD' } },
+    ]);
+    expect(option?.codCurrency).toBe('USD');
+  });
+
+  it('never invents a code from anything else', () => {
+    for (const value of [null, 12, ['USD'], {}, { CurrencyCode: 840 }, { Name: 'US Dollar' }]) {
+      const [option] = parseMarketplaceRates([{ ...liveRateOption, WorkingCurrency: value }]);
+      expect(option?.workingCurrency).toBeUndefined();
+      expect(option?.rate).toBe(2.121);
+    }
   });
 });

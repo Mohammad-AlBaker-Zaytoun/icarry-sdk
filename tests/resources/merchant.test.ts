@@ -114,4 +114,14 @@ describe('MerchantResource', () => {
       merchant.estimateRates({ ...rateInput, to: { latitude: 200, longitude: 0 } })
     ).rejects.toBeInstanceOf(ICarryValidationError);
   });
+
+  it('still requires `to` — the coordinate-free form is only observed on the marketplace route', async () => {
+    const mock = sequenceFetch(jsonResponse({}));
+    const merchant = new MerchantResource(makeHttp(mock));
+    const { to, ...noTo } = rateInput;
+    await expect(merchant.estimateRates(noTo as typeof rateInput)).rejects.toBeInstanceOf(
+      ICarryValidationError
+    );
+    expect(mock.calls).toHaveLength(0);
+  });
 });

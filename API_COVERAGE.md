@@ -20,7 +20,7 @@ well iCarry's docs pin down the request/response contract.
 | `countries.getStateProvinceById` | GET | `/Country/GetStateProvincesById/{id}` | yes | `id` | `StateProvince` | read | — | High | — |
 | `merchant.estimateRates` | POST | `/SmartwareShipment/EstimateRatesByCOD` | yes | `MerchantRateInput` | `MerchantRateResult` (open) | opt-in | — | Med (req), Low (resp) | Body carries both `Dimensions` and `ParcelDimensionsList`; `Unit`/`ZipPostCode` placement unverified; `COdCurrency` casing. Response unverified. |
 | `merchant.createOrder` | POST | `/SmartwareShipment/CreateOrder` | yes | `MerchantCreateOrderInput` | `MerchantOrderResult` (open) | never | — | Med (req), Low (resp) | `MethodId`; top-level `Length/Width/Height`; docs duplicate `ToLongitude`; `ProcessOrder`/`ExternalId` sent only if provided. Response unverified. |
-| `marketplace.estimateRates` | POST | `/SmartwareShipment/EstimateRatesForMarketplace` | yes | `MarketplaceRateInput` | `MarketplaceRateResult` (open) | opt-in | — | Med (req), Low (resp) | Merchant model + `pickupLocation`. Response seen live **once**; type deliberately **not** narrowed — opt into structure with [`parseMarketplaceRates()`](#provisional-marketplace-rate-options). |
+| `marketplace.estimateRates` | POST | `/SmartwareShipment/EstimateRatesForMarketplace` | yes | `MarketplaceRateInput` | `MarketplaceRateResult` (open) | opt-in | — | Med (req), Low (resp) | Merchant model + `pickupLocation`; **`to` optional** — [city-name quoting](#city-name-marketplace-quotes) observed live. Omitting `Dimensions` → HTTP 500. Unknown city → 404 `Unsupported City`. Type deliberately **not** narrowed — opt into structure with [`parseMarketplaceRates()`](#provisional-marketplace-rate-options). |
 | `marketplace.createOrder` | POST | `/SmartwareShipment/CreateOrderForMarketPlace` | yes | `MarketplaceCreateOrderInput` | `MarketplaceOrderResult` (open) | never | — | Med (req), Low (resp) | Merchant model + `pickupLocation`; `MethodId`. |
 | `onDemand.estimateRates` | POST | `/SmartwareShipment/EstimateRates` | yes | `OnDemandRateInput` | `OnDemandRateResult` (open) | opt-in | — | Med (req), Low (resp) | Country/state **ids**, `From`/`To` geo, `CODCurrency` (proper casing). Response unverified. |
 | `onDemand.createShipment` | POST | `/SmartwareShipment/CreateOnDemandShipment` | yes | `OnDemandCreateShipmentInput` | `OnDemandShipmentResult` (open) | never | — | Med (req), Low (resp) | `MethodName` (not `MethodId`); id-based addresses. Expected to return a shipment id (unverified). |
@@ -28,8 +28,9 @@ well iCarry's docs pin down the request/response contract.
 | `payments.confirmPayment` | POST | `/SmartwareShipment/ConfirmPayment/{shipmentId}` | yes | `ConfirmPaymentInput` (open) | `PaymentResult` (open) | never | **card** | Low | Large nopCommerce order body; schema unverified — pass wire (PascalCase) fields. |
 | `payments.processMontyPaySuccess` | POST | `/SmartwareShipment/montyPaySuccessReturnUrl?orderId=&shipmentId=` | yes | `MontyPayReturnInput` | `PaymentResult` (open) | never | — | Low | **No** callback signature verification is performed or claimed. |
 | `payments.processMontyPayCancellation` | POST | `/SmartwareShipment/montyPayCancelReturnUrl?orderId=&shipmentId=` | yes | `MontyPayReturnInput` | `PaymentResult` (open) | never | — | Low | No signature verification. |
-| `shipments.track` | GET | `/SmartwareShipment/orderTracking?trackingNumber=` | yes | `trackingNumber` | `TrackingResult` (open) | read | — | Med (req), Low (resp) | Response unverified. |
-| `shipments.cancel` | GET | `/SmartwareShipment/CancelOrder?trackingNumber=` | yes | `trackingNumber` | `CancelResult` (open) | never | — | Med | **Mutating GET** — not cached or retried. |
+| `shipments.track` | GET | `/SmartwareShipment/orderTracking?trackingNumber=` | yes | `trackingNumber` | `TrackingResult` (open) | read | — | Med (req), Low (resp) | Object shape unverified. A `Created` shipment answers with the **bare string** `"Created"`; a deleted/portal-cancelled one fails with "shipment … not exists" — see [shipment replies](#shipment-replies). |
+| `shipments.cancel` | GET | `/SmartwareShipment/CancelOrder?trackingNumber=` | yes | `trackingNumber` | `CancelResult` (open) | never | — | Med | **Mutating GET** — not cached or retried. Can be refused with `"Cannot cancelled this order."`. |
+| `shipments.delete` | POST | `/SmartwareShipment/DeleteShipment/{shipmentId}` | yes | `shipmentId` | `DeleteShipmentResult` (open) | never | — | Low (undocumented, live-observed) | **Not in iCarry's docs or OpenAPI.** For shipments still `Created`. No body. Success is the bare text `"shipment Delete success"`. |
 | `shipments.getPackagingSlip` | GET | `/SmartwareShipment/PdfPackagingSlip/{shipmentId}` | yes | `shipmentId` | `PackagingSlip` (binary \| json) | read | — | Low | Named "Pdf" but content type is ambiguous; handled at runtime. |
 
 ## GetAll vs GetById casing split
@@ -184,6 +185,64 @@ modeled; every option carries the untouched record on `raw`. Narrowing the metho
 still requires repeatable observations across tenants. The merchant and on-demand rate endpoints
 have **no** such helper — their responses remain unobserved.
 
+## Live observations (2026-10)
+
+Reported from a production marketplace integration running this SDK against `lb.icarry.com` (and,
+for deletion, `test.icarry.com`) between 2026-10-15 and 2026-10-22. Values below are the carrier's
+replies; no shipment ids, tracking numbers or account data are recorded here.
+
+None of this narrows a result type — every route stays `AmbiguousApiResult`. What changed is one
+input constraint (marketplace `to`), one new route, a currency-reading fix, and small **opt-in,
+non-throwing** readers that recognise exactly the observed replies and nothing broader.
+
+### City-name marketplace quotes
+
+| Request | Reply |
+|---|---|
+| `EstimateRatesForMarketplace` with **no** `ToLatitude`/`ToLongitude`, valid Lebanon city name in `DropOffLocation` and `DropAddress.City` | USD rate options (checked for Beirut, Jbeil, Tripoli and Baabda; prepaid and COD) |
+| Same, invalid city name | HTTP **404** `Unsupported City` → `isUnsupportedCityError(error)` |
+| Same, **without** the top-level `Dimensions` object (with `ParcelDimensionsList`) | HTTP **500** |
+| Same, omitting `ActualWeight` or a single dimension axis | Still returned rates — weak server validation, not a default |
+
+iCarry's published table marks the coordinates mandatory; this tenant does not require them. So
+`MarketplaceRateInput.to` is now **optional**: omitted, both wire keys are left out (never `0`/`null`);
+supplied, it is validated and sent as before. `MerchantRateInput.to` stays **required** — the merchant
+route's coordinate-free behaviour has not been observed. The SDK keeps requiring `dimensions` and
+`actualWeight`, given the HTTP 500 above and because a missing measurement should not become a quote.
+
+Earlier, on 2026-08-01 (coordinate-based body), the same tenant returned **no rate options at all** for
+parcels under 1 kg — `0.99` → `[]`, `1.00` → one option — rather than quoting its minimum price. A
+real empty list is therefore possible; `parseMarketplaceRates()` cannot tell it apart from an
+unrecognised shape, so inspect the raw result. The October city-name quotes priced 0.4 kg parcels, so
+treat any minimum as tenant/configuration-dependent, not a contract.
+
+`WorkingCurrency` arrives as an **object** — `{ CurrencyCode: "USD", Name: "US Dollar", … }` — not
+the string the 2026-07-30 fixture assumed. 0.1.9's `parseMarketplaceRates()` therefore left
+`workingCurrency` **undefined** on live data. It now reads the code from either form (same for
+`CODCurrency`); the full object stays on `raw`.
+
+### Shipment replies
+
+| Call | Reply | Reader |
+|---|---|---|
+| `track()` on a booked, unprocessed shipment | bare string `"Created"` (no tracking number echoed) | `isCreatedTrackingResult(result)` |
+| `cancel()` iCarry will not cancel | error `"Cannot cancelled this order."` (sic) | `isCancellationRejected(errorOrResult)` |
+| `delete(shipmentId)` on a `Created` shipment | bare text `"shipment Delete success"` (7 of 7, 2026-10-22) | `isShipmentDeleteSuccess(result)` |
+| `track()` after a delete, or after a pre-pickup cancellation in the iCarry portal | error "shipment … not exists" | `isShipmentNotFoundError(error)` |
+
+`Created` shipments are removed with `DeleteShipment` by **shipment id**; `CancelOrder` (by tracking
+number) is for shipments past that state. The `"Created"` label carries no identity — use it as an
+eligibility hint. "Not exists" is **not** proof of cancellation or non-collection: the same reply
+follows a wrong tracking number or account. `isShipmentNotFoundError` also accepts a bare HTTP 404,
+which can equally mean a misconfigured base URL. The readers return `false` for anything they do not
+recognise, and only an `ICarryApiError` (a real HTTP reply) counts as an error match.
+
+### State list duplicates
+
+`GetStatesByCountryId` for Lebanon lists `Adma` and `Saida` **twice each** under different ids; live
+quotes for all four ids were identical. The SDK returns the list verbatim — de-duplicating is an
+application decision (which id to keep, how to resolve saved addresses holding the other).
+
 ## Live-verified (2026-07-30)
 
 Confirmed against the iCarry test tenant (`https://test.icarry.com`) with customer-API
@@ -228,6 +287,9 @@ routes so the next live run confirms or refutes it.
 The following cannot be confirmed without live iCarry test credentials and are modeled defensively:
 
 - Exact response schemas for all rate/create/track/confirm/MontyPay operations (returned as open records).
+  Tracking for states other than `Created`, and every non-text `DeleteShipment` reply, remain unobserved.
+- Whether `DeleteShipment` works for shipments past `Created`, and whether `EstimateRatesByCOD`
+  (merchant) also accepts a body without coordinates.
 - Whether `EstimateRatesByCOD` honors `Dimensions`, `ParcelDimensionsList`, or both, and the placement
   of `Unit`/`ZipPostCode`.
 - Whether the MontyPay return operations require authentication (currently sent authenticated).
