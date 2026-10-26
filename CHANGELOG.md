@@ -595,7 +595,8 @@ create/rate/track/payment operations as provisional.
   serialized payment URL never exposed. No PCI-compliance claim; no card storage.
 - MontyPay return operations perform no callback signature verification (none is documented).
 
-[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Mohammad-AlBaker-Zaytoun/icarry-sdk/compare/v0.1.6...v0.1.7
